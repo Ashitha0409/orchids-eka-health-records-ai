@@ -12,6 +12,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 interface TopNavProps {
   user: {
@@ -24,11 +26,43 @@ interface TopNavProps {
 }
 
 export function TopNav({ user, showVoice = true }: TopNavProps) {
+  const router = useRouter();
+
   const initials = user.name
     .split(" ")
     .map((n) => n[0])
     .join("")
     .toUpperCase();
+
+  const handleProfileClick = () => {
+    // Navigate to profile page based on role
+    if (user.role === 'doctor') {
+      router.push("/doctor-dashboard/profile");
+    } else {
+      router.push("/patient-dashboard/profile");
+    }
+  };
+
+  const handleSettingsClick = () => {
+    // Navigate to settings page based on role
+    if (user.role === 'doctor') {
+      router.push("/doctor-dashboard/settings");
+    } else {
+      router.push("/patient-dashboard/settings");
+    }
+  };
+
+  const handleSignOut = () => {
+    // Clear any stored user data
+    localStorage.removeItem("pendingUser");
+    localStorage.removeItem("user");
+    
+    // Show sign out message
+    toast.success("Signed out successfully");
+    
+    // Navigate to home page
+    router.push("/");
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-white/80 px-6 backdrop-blur-sm">
@@ -85,10 +119,23 @@ export function TopNav({ user, showVoice = true }: TopNavProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 rounded-xl">
-            <DropdownMenuItem className="rounded-lg">Profile</DropdownMenuItem>
-            <DropdownMenuItem className="rounded-lg">Settings</DropdownMenuItem>
+            <DropdownMenuItem 
+              className="rounded-lg cursor-pointer"
+              onClick={handleProfileClick}
+            >
+              Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem 
+              className="rounded-lg cursor-pointer"
+              onClick={handleSettingsClick}
+            >
+              Settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="rounded-lg text-destructive focus:text-destructive">
+            <DropdownMenuItem 
+              className="rounded-lg text-destructive focus:text-destructive cursor-pointer"
+              onClick={handleSignOut}
+            >
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
