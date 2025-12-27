@@ -1,5 +1,56 @@
 import { ObjectId } from 'mongodb';
 
+// NEW: Medicine Order Model for Medicine Booking System
+export interface MedicineItem {
+  medicine: {
+    id: string;
+    name: string;
+    brand: string;
+    price: number;
+    image: string;
+    dosage: string;
+    manufacturer: string;
+    description: string;
+  };
+  quantity: number;
+  quantityType: 'single' | 'double' | 'half';
+  prescriptionImage?: string;
+}
+
+export interface Pharmacy {
+  id: string;
+  name: string;
+  image: string;
+  rating: number;
+  distance: number;
+  address: string;
+  isOpen: boolean;
+  deliveryTime: string;
+  phone: string;
+}
+
+export interface Order {
+  _id?: ObjectId;
+  customerId?: string; // User ID from localStorage/session
+  items: MedicineItem[];
+  pharmacy: Pharmacy;
+  customerPhone: string;
+  totalAmount: number;
+  status: 'pending' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  orderDate: Date;
+  estimatedDelivery: string;
+  prescriptionImage?: string;
+  blockchainEscrowId?: string; // For blockchain integration
+  karmaPointsEarned?: number;
+  karmaPointsUsed?: number;
+  isUrgent?: boolean;
+  deliveredAt?: Date;
+  cancelledAt?: Date;
+  paymentMethod?: 'cash' | 'card' | 'upi' | 'blockchain';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // User Schema (Base for both doctors and patients)
 export interface User {
   _id?: ObjectId;
@@ -291,6 +342,11 @@ export const createIndexes = async (db: any) => {
     await db.collection('users').createIndex({ role: 1 });
     await db.collection('users').createIndex({ firstName: 1, lastName: 1 });
     await db.collection('users').createIndex({ profileCompleted: 1 });
+
+    // Orders collection indexes
+    await db.collection('orders').createIndex({ customerId: 1 });
+    await db.collection('orders').createIndex({ orderDate: -1 });
+    await db.collection('orders').createIndex({ status: 1 });
 
     // Extended profiles collection indexes
     await db.collection('extendedProfiles').createIndex({ userId: 1 }, { unique: true });
