@@ -48,8 +48,16 @@ import {
   XCircle,
   Loader2,
   MapPinIcon,
+  Wallet,
+  AlertTriangle,
+  RefreshCw,
+  Ban,
+  DollarSign,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useMetaMask } from "@/hooks/use-metamask";
 
 interface Medicine {
   id: string;
@@ -75,16 +83,36 @@ interface CartItem {
   prescriptionImage?: string;
 }
 
+type OrderStatus = 
+  | 'pending_payment'
+  | 'paid_locked'
+  | 'preparing'
+  | 'out_for_delivery'
+  | 'delivered'
+  | 'cancelled'
+  | 'no_show';
+
 interface Order {
   id: string;
+  _id?: string;
   items: CartItem[];
   pharmacy: Pharmacy;
   customerPhone: string;
   totalAmount: number;
-  status: 'pending' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  totalWithDelivery: number;
+  deliveryFee: number;
+  status: OrderStatus;
   orderDate: string;
   estimatedDelivery: string;
   prescriptionImage?: string;
+  // Escrow fields
+  walletAddress?: string;
+  escrowLockedAmount?: number;
+  escrowTransactionId?: string;
+  escrowStatus?: 'locked' | 'released' | 'refunded' | 'partial_refund' | 'penalty_applied';
+  collectionDeadline?: string;
+  refundAmount?: number;
+  penaltyAmount?: number;
 }
 
 interface Pharmacy {
@@ -99,6 +127,8 @@ interface Pharmacy {
   phone: string;
 }
 
+const DELIVERY_FEE = 50;
+
 export default function MedicationsSection() {
   const [activeTab, setActiveTab] = useState("list");
   const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -111,11 +141,33 @@ export default function MedicationsSection() {
   const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
   const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
   const [orderDetailDialogOpen, setOrderDetailDialogOpen] = useState(false);
+  const [walletDialogOpen, setWalletDialogOpen] = useState(false);
   const [selectedMedicine, setSelectedMedicine] = useState<Medicine | null>(null);
   const [selectedPharmacy, setSelectedPharmacy] = useState<Pharmacy | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [prescriptionImage, setPrescriptionImage] = useState<string | null>(null);
   const [customerPhone, setCustomerPhone] = useState("");
+  const [isProcessingOrder, setIsProcessingOrder] = useState(false);
+
+  // MetaMask hook
+  const {
+    walletAddress,
+    network,
+    balance,
+    isConnected,
+    isMetaMaskInstalled,
+    isLoading: isMetaMaskLoading,
+    transactions,
+    connect: connectWallet,
+    disconnect: disconnectWallet,
+    lockAmount,
+    releaseAmount,
+    refundAmount,
+    chargePenalty,
+    addFunds,
+    resetBalance,
+    PENALTY_RATE,
+  } = useMetaMask();
 
   const categories = [
     { id: "all", name: "All Medicines", icon: Pill },
@@ -251,6 +303,7 @@ export default function MedicationsSection() {
     setMedicines(extendedMedicines);
     setPharmacies(mockPharmacies);
 
+    // Load orders from localStorage
     const savedOrders = localStorage.getItem("userOrders");
     if (savedOrders) {
       setOrders(JSON.parse(savedOrders));
@@ -265,6 +318,8 @@ export default function MedicationsSection() {
     const multiplier = item.quantityType === 'double' ? 1.8 : item.quantityType === 'half' ? 0.6 : 1;
     return sum + (item.medicine.price * multiplier * item.quantity);
   }, 0);
+
+  const totalWithDelivery = totalCartAmount + DELIVERY_FEE;
 
   const filteredMedicines = medicines.filter(medicine => {
     const matchesSearch = medicine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -309,75 +364,269 @@ export default function MedicationsSection() {
     setQuantityDialogOpen(true);
   };
 
+  const handleConnectWallet = async () => {
+    try {
+      await connectWallet();
+      toast.success("Wallet connected successfully!");
+      setWalletDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to connect wallet");
+    }
+  };
+
   const placeOrderWithPharmacy = (pharmacy: Pharmacy) => {
     if (!prescriptionImage || cart.length === 0) {
       toast.error("Please upload prescription and add medicines first!");
       return;
     }
+    
+    if (!isConnected) {
+      toast.error("Please connect your MetaMask wallet first!");
+      setWalletDialogOpen(true);
+      return;
+    }
+
+    if (balance < totalWithDelivery) {
+      toast.error(`Insufficient balance! You have ₹${balance.toFixed(0)}, need ₹${totalWithDelivery.toFixed(0)}`);
+      return;
+    }
+
     setSelectedPharmacy(pharmacy);
     setPhoneDialogOpen(true);
   };
 
-  const confirmOrder = () => {
+  const confirmOrder = async () => {
     if (!customerPhone || !selectedPharmacy || customerPhone.length < 10) {
       toast.error("Please provide valid phone number!");
       return;
     }
 
-    const newOrder: Order = {
-      id: `order-${Date.now()}`,
-      items: [...cart],
-      pharmacy: selectedPharmacy,
-      customerPhone: customerPhone,
-      totalAmount: totalCartAmount,
-      status: 'pending',
-      orderDate: new Date().toISOString(),
-      estimatedDelivery: selectedPharmacy.deliveryTime,
-      prescriptionImage: prescriptionImage
-    };
+    if (!isConnected || !walletAddress) {
+      toast.error("Please connect MetaMask wallet first!");
+      return;
+    }
 
-    setOrders(prev => [...prev, newOrder]);
-    setCart([]);
-    setPrescriptionImage(null);
-    setCustomerPhone("");
-    setPhoneDialogOpen(false);
-    toast.success(`Order #${newOrder.id.slice(-6)} placed with ${selectedPharmacy.name}!`);
+    setIsProcessingOrder(true);
+
+    try {
+      // Lock amount in escrow
+      const escrowTxId = `tx_${Date.now()}`;
+      await lockAmount(totalWithDelivery, escrowTxId);
+
+      const newOrder: Order = {
+        id: `order-${Date.now()}`,
+        items: [...cart],
+        pharmacy: selectedPharmacy,
+        customerPhone: customerPhone,
+        totalAmount: totalCartAmount,
+        totalWithDelivery: totalWithDelivery,
+        deliveryFee: DELIVERY_FEE,
+        status: 'paid_locked',
+        orderDate: new Date().toISOString(),
+        estimatedDelivery: selectedPharmacy.deliveryTime,
+        prescriptionImage: prescriptionImage || undefined,
+        // Escrow fields
+        walletAddress: walletAddress,
+        escrowLockedAmount: totalWithDelivery,
+        escrowTransactionId: escrowTxId,
+        escrowStatus: 'locked',
+        collectionDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      setOrders(prev => [...prev, newOrder]);
+      setCart([]);
+      setPrescriptionImage(null);
+      setCustomerPhone("");
+      setPhoneDialogOpen(false);
+      
+      toast.success(
+        `Order placed! ₹${totalWithDelivery.toFixed(0)} locked in escrow. Collect within 24hrs.`,
+        { duration: 5000 }
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to process payment");
+    } finally {
+      setIsProcessingOrder(false);
+    }
   };
 
-  const getStatusColor = (status: Order['status']) => {
+  // Order actions
+  const handleCancelOrder = async (order: Order) => {
+    if (!['pending_payment', 'paid_locked', 'preparing'].includes(order.status)) {
+      toast.error("Order cannot be cancelled at this stage");
+      return;
+    }
+
+    setIsProcessingOrder(true);
+    try {
+      const escrowAmount = order.escrowLockedAmount || 0;
+      
+      if (order.status === 'paid_locked') {
+        // Full refund before preparation
+        await refundAmount(escrowAmount, order.id);
+        toast.success(`Order cancelled! Full refund of ₹${escrowAmount.toFixed(0)} processed.`);
+      } else if (order.status === 'preparing') {
+        // Partial refund (50% penalty)
+        const penaltyAmt = escrowAmount * 0.5;
+        const refundAmt = escrowAmount - penaltyAmt;
+        await refundAmount(refundAmt, order.id);
+        toast.warning(`Order cancelled! ₹${refundAmt.toFixed(0)} refunded (50% penalty applied).`);
+      }
+
+      setOrders(prev => prev.map(o => 
+        o.id === order.id 
+          ? { 
+              ...o, 
+              status: 'cancelled' as OrderStatus,
+              escrowStatus: order.status === 'paid_locked' ? 'refunded' : 'partial_refund',
+              refundAmount: order.status === 'paid_locked' ? escrowAmount : escrowAmount * 0.5,
+              penaltyAmount: order.status === 'paid_locked' ? 0 : escrowAmount * 0.5,
+            }
+          : o
+      ));
+      setOrderDetailDialogOpen(false);
+    } catch (error) {
+      toast.error("Failed to cancel order");
+    } finally {
+      setIsProcessingOrder(false);
+    }
+  };
+
+  const handleMarkCollected = async (order: Order) => {
+    if (order.status !== 'out_for_delivery') {
+      toast.error("Order must be out for delivery to mark as collected");
+      return;
+    }
+
+    setIsProcessingOrder(true);
+    try {
+      // Release escrow to pharmacy
+      await releaseAmount(order.escrowLockedAmount || 0, order.id);
+      
+      setOrders(prev => prev.map(o => 
+        o.id === order.id 
+          ? { ...o, status: 'delivered' as OrderStatus, escrowStatus: 'released' }
+          : o
+      ));
+      
+      toast.success("Order marked as delivered! Escrow released to pharmacy.");
+      setOrderDetailDialogOpen(false);
+    } catch (error) {
+      toast.error("Failed to process collection");
+    } finally {
+      setIsProcessingOrder(false);
+    }
+  };
+
+  const handleMarkNoShow = async (order: Order) => {
+    if (order.status !== 'out_for_delivery') {
+      toast.error("Can only mark no-show for orders out for delivery");
+      return;
+    }
+
+    setIsProcessingOrder(true);
+    try {
+      const escrowAmount = order.escrowLockedAmount || 0;
+      const result = await chargePenalty(escrowAmount, order.id);
+      
+      setOrders(prev => prev.map(o => 
+        o.id === order.id 
+          ? { 
+              ...o, 
+              status: 'no_show' as OrderStatus,
+              escrowStatus: 'penalty_applied',
+              penaltyAmount: result.penaltyAmount,
+              refundAmount: result.refundAmount,
+            }
+          : o
+      ));
+      
+      toast.warning(
+        `No-show recorded! Penalty: ₹${result.penaltyAmount.toFixed(0)}, Refund: ₹${result.refundAmount.toFixed(0)}`,
+        { duration: 5000 }
+      );
+      setOrderDetailDialogOpen(false);
+    } catch (error) {
+      toast.error("Failed to process no-show");
+    } finally {
+      setIsProcessingOrder(false);
+    }
+  };
+
+  // Simulate status progression (for demo purposes)
+  const simulateNextStatus = (order: Order) => {
+    const statusFlow: Record<string, OrderStatus> = {
+      'paid_locked': 'preparing',
+      'preparing': 'out_for_delivery',
+    };
+    
+    const nextStatus = statusFlow[order.status];
+    if (nextStatus) {
+      setOrders(prev => prev.map(o => 
+        o.id === order.id ? { ...o, status: nextStatus } : o
+      ));
+      toast.success(`Order status updated to: ${getStatusText(nextStatus)}`);
+    }
+  };
+
+  const getStatusColor = (status: OrderStatus) => {
     switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'confirmed': return 'bg-blue-100 text-blue-800';
+      case 'pending_payment': return 'bg-gray-100 text-gray-800';
+      case 'paid_locked': return 'bg-blue-100 text-blue-800';
       case 'preparing': return 'bg-orange-100 text-orange-800';
       case 'out_for_delivery': return 'bg-purple-100 text-purple-800';
       case 'delivered': return 'bg-emerald-100 text-emerald-800';
       case 'cancelled': return 'bg-red-100 text-red-800';
+      case 'no_show': return 'bg-amber-100 text-amber-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const getStatusIcon = (status: Order['status']) => {
+  const getStatusIcon = (status: OrderStatus) => {
     const icons = {
-      pending: <Loader2 className="h-6 w-6 animate-spin" />,
-      confirmed: <CheckCircle className="h-6 w-6" />,
+      pending_payment: <Wallet className="h-6 w-6" />,
+      paid_locked: <Lock className="h-6 w-6" />,
       preparing: <Activity className="h-6 w-6" />,
-      'out_for_delivery': <Truck className="h-6 w-6" />,
+      out_for_delivery: <Truck className="h-6 w-6" />,
       delivered: <CheckCircle2 className="h-6 w-6" />,
-      cancelled: <XCircle className="h-6 w-6" />
+      cancelled: <XCircle className="h-6 w-6" />,
+      no_show: <AlertTriangle className="h-6 w-6" />
     };
     return icons[status] || <Clock className="h-6 w-6" />;
   };
 
-  const getStatusText = (status: Order['status']) => {
+  const getStatusText = (status: OrderStatus) => {
     const texts = {
-      pending: 'Order Received',
-      confirmed: 'Confirmed',
+      pending_payment: 'Pending Payment',
+      paid_locked: 'Payment Locked',
       preparing: 'Preparing',
-      'out_for_delivery': 'Out for Delivery',
-      delivered: 'Delivered',
-      cancelled: 'Cancelled'
+      out_for_delivery: 'Out for Delivery',
+      delivered: 'Delivered & Collected',
+      cancelled: 'Cancelled',
+      no_show: 'No Show'
     };
     return texts[status] || 'Processing';
+  };
+
+  const getEscrowStatusBadge = (order: Order) => {
+    if (!order.escrowStatus) return null;
+    
+    const badges: Record<string, { color: string; text: string }> = {
+      locked: { color: 'bg-blue-500', text: '🔒 Escrow Locked' },
+      released: { color: 'bg-emerald-500', text: '✅ Released to Pharmacy' },
+      refunded: { color: 'bg-green-500', text: '💰 Fully Refunded' },
+      partial_refund: { color: 'bg-yellow-500', text: '⚠️ Partial Refund' },
+      penalty_applied: { color: 'bg-red-500', text: '❌ Penalty Applied' },
+    };
+    
+    const badge = badges[order.escrowStatus];
+    if (!badge) return null;
+    
+    return (
+      <Badge className={`${badge.color} text-white`}>
+        {badge.text}
+      </Badge>
+    );
   };
 
   return (
@@ -388,9 +637,31 @@ export default function MedicationsSection() {
           <h2 className="font-display text-3xl lg:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
             💊 Medicines
           </h2>
-          <p className="text-xl text-muted-foreground mt-1">Order from nearby pharmacies with prescription upload</p>
+          <p className="text-xl text-muted-foreground mt-1">Order from nearby pharmacies with MetaMask escrow protection</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          {/* Wallet Status */}
+          {isConnected ? (
+            <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              <div className="text-sm">
+                <p className="font-medium text-emerald-700">₹{balance.toFixed(0)}</p>
+                <p className="text-xs text-emerald-600">{walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}</p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={disconnectWallet} className="h-8 px-2">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <Button 
+              variant="outline" 
+              className="gap-2 rounded-2xl h-12 border-purple-200 hover:bg-purple-50"
+              onClick={() => setWalletDialogOpen(true)}
+            >
+              <Wallet className="h-4 w-4" />
+              Connect Wallet
+            </Button>
+          )}
           <Button 
             variant="outline" 
             className="gap-2 rounded-2xl h-12 flex-1 sm:flex-none"
@@ -408,7 +679,7 @@ export default function MedicationsSection() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 bg-white/50 backdrop-blur-sm border rounded-3xl p-1 shadow-lg">
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 bg-white/50 backdrop-blur-sm border rounded-3xl p-1 shadow-lg">
           <TabsTrigger value="list" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-primary data-[state=active]:to-primary/80 data-[state=active]:shadow-lg rounded-2xl py-3">
             Medicine List
           </TabsTrigger>
@@ -420,6 +691,9 @@ export default function MedicationsSection() {
           </TabsTrigger>
           <TabsTrigger value="cart" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 data-[state=active]:shadow-lg rounded-2xl py-3">
             Cart ({cart.length})
+          </TabsTrigger>
+          <TabsTrigger value="wallet" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-600 data-[state=active]:shadow-lg rounded-2xl py-3">
+            💰 Wallet
           </TabsTrigger>
         </TabsList>
 
@@ -504,6 +778,29 @@ export default function MedicationsSection() {
 
         {/* Pharmacies Tab */}
         <TabsContent value="pharmacies" className="mt-6">
+          {/* MetaMask Connection Banner */}
+          {!isConnected && (
+            <Card className="mb-6 bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-purple-100 rounded-2xl">
+                    <Wallet className="h-8 w-8 text-purple-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-bold text-lg text-purple-900">Connect MetaMask for Secure Payments</h3>
+                    <p className="text-sm text-purple-700">Your payment is locked in escrow until you collect your order. Auto-refund if not collected!</p>
+                  </div>
+                  <Button 
+                    onClick={() => setWalletDialogOpen(true)}
+                    className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl"
+                  >
+                    Connect Wallet
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {pharmacies.map((pharmacy) => (
               <Card key={pharmacy.id} className="group hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 bg-white/70 backdrop-blur-sm hover:bg-white border-0">
@@ -536,10 +833,17 @@ export default function MedicationsSection() {
                     <div className="space-y-3">
                       <Button 
                         onClick={() => placeOrderWithPharmacy(pharmacy)}
-                        className="w-full rounded-2xl h-12 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-xl font-semibold"
+                        disabled={!isConnected || balance < totalWithDelivery || isMetaMaskLoading}
+                        className="w-full rounded-2xl h-12 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-xl font-semibold disabled:opacity-50"
                       >
-                        <CheckCircle2 className="h-5 w-5 mr-2" />
-                        Confirm Order ₹{(totalCartAmount + 50).toFixed(0)}
+                        {isMetaMaskLoading ? (
+                          <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                        ) : (
+                          <Lock className="h-5 w-5 mr-2" />
+                        )}
+                        {!isConnected ? 'Connect Wallet First' : 
+                         balance < totalWithDelivery ? 'Insufficient Balance' :
+                         `Lock ₹${totalWithDelivery.toFixed(0)} in Escrow`}
                       </Button>
                       <Button 
                         variant="outline" 
@@ -590,14 +894,21 @@ export default function MedicationsSection() {
                     setOrderDetailDialogOpen(true);
                   }}
                 >
-                  <CardContent className="p-6 pt-0">
+                  <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
                       <div className={`p-2 rounded-xl ${getStatusColor(order.status)}`}>
                         {getStatusIcon(order.status)}
                       </div>
-                      <Badge className="bg-gradient-to-r from-primary to-primary/80 shadow">
-                        ₹{order.totalAmount.toFixed(0)}
-                      </Badge>
+                      <div className="text-right">
+                        <Badge className="bg-gradient-to-r from-primary to-primary/80 shadow">
+                          ₹{order.totalWithDelivery?.toFixed(0) || order.totalAmount?.toFixed(0)}
+                        </Badge>
+                        {order.escrowStatus && (
+                          <div className="mt-1">
+                            {getEscrowStatusBadge(order)}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="space-y-2 mb-4">
                       <h3 className="font-bold text-lg">{order.pharmacy.name}</h3>
@@ -659,15 +970,36 @@ export default function MedicationsSection() {
                     </div>
                     <div className="flex justify-between text-lg text-muted-foreground">
                       <span>Delivery Fee</span>
-                      <span>₹50</span>
+                      <span>₹{DELIVERY_FEE}</span>
                     </div>
                     <div className="h-px bg-muted my-3" />
                     <div className="flex justify-between text-3xl font-bold text-primary">
                       <span>Grand Total</span>
-                      <span>₹{(totalCartAmount + 50).toFixed(0)}</span>
+                      <span>₹{totalWithDelivery.toFixed(0)}</span>
                     </div>
                   </div>
-                  <Button className="w-full mt-6 rounded-2xl h-14 bg-gradient-to-r from-primary to-primary/90 shadow-xl text-lg font-bold">
+                  {isConnected ? (
+                    <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                      <div className="flex items-center gap-2 text-emerald-700">
+                        <Wallet className="h-5 w-5" />
+                        <span className="font-medium">Wallet Balance: ₹{balance.toFixed(0)}</span>
+                        {balance < totalWithDelivery && (
+                          <Badge variant="destructive" className="ml-auto">Insufficient</Badge>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <AlertTriangle className="h-5 w-5" />
+                        <span className="font-medium">Connect MetaMask wallet to proceed</span>
+                      </div>
+                    </div>
+                  )}
+                  <Button 
+                    className="w-full mt-6 rounded-2xl h-14 bg-gradient-to-r from-primary to-primary/90 shadow-xl text-lg font-bold"
+                    onClick={() => setActiveTab('pharmacies')}
+                  >
                     Proceed to Checkout
                   </Button>
                 </CardContent>
@@ -675,7 +1007,247 @@ export default function MedicationsSection() {
             </div>
           )}
         </TabsContent>
+
+        {/* Wallet Tab */}
+        <TabsContent value="wallet" className="mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Wallet Info Card */}
+            <Card className="bg-gradient-to-br from-purple-500 to-pink-600 text-white">
+              <CardContent className="p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <Wallet className="h-8 w-8" />
+                  <h3 className="text-2xl font-bold">MetaMask Wallet</h3>
+                </div>
+                {isConnected ? (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-purple-200 text-sm">Balance</p>
+                      <p className="text-4xl font-bold">₹{balance.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-purple-200 text-sm">Address</p>
+                      <p className="font-mono text-sm bg-white/20 px-3 py-2 rounded-xl">
+                        {walletAddress}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-purple-200 text-sm">Network</p>
+                      <p className="font-medium">{network}</p>
+                    </div>
+                    <div className="flex gap-2 pt-4">
+                      <Button 
+                        variant="secondary" 
+                        className="flex-1 rounded-xl"
+                        onClick={() => addFunds(1000)}
+                      >
+                        <DollarSign className="h-4 w-4 mr-2" />
+                        Add ₹1000 (Demo)
+                      </Button>
+                      <Button 
+                        variant="secondary" 
+                        className="flex-1 rounded-xl"
+                        onClick={resetBalance}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Reset Balance
+                      </Button>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      className="w-full rounded-xl bg-white/10 border-white/30 hover:bg-white/20"
+                      onClick={disconnectWallet}
+                    >
+                      Disconnect Wallet
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-purple-200 mb-4">Connect your wallet to manage payments</p>
+                    <Button 
+                      className="rounded-xl bg-white text-purple-600 hover:bg-purple-50"
+                      onClick={handleConnectWallet}
+                      disabled={isMetaMaskLoading}
+                    >
+                      {isMetaMaskLoading ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Wallet className="h-4 w-4 mr-2" />
+                      )}
+                      Connect MetaMask
+                    </Button>
+                    {!isMetaMaskInstalled && (
+                      <p className="text-xs text-purple-200 mt-4">
+                        MetaMask not detected. Please install the extension.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Transactions Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5" />
+                  Transaction History
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {transactions.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-12 w-12 mx-auto mb-2 opacity-30" />
+                    <p>No transactions yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-80 overflow-y-auto">
+                    {transactions.slice().reverse().map((tx) => (
+                      <div key={tx.id} className="flex items-center gap-3 p-3 border rounded-xl">
+                        <div className={`p-2 rounded-xl ${
+                          tx.type === 'lock' ? 'bg-blue-100 text-blue-600' :
+                          tx.type === 'release' ? 'bg-emerald-100 text-emerald-600' :
+                          tx.type === 'refund' ? 'bg-green-100 text-green-600' :
+                          'bg-red-100 text-red-600'
+                        }`}>
+                          {tx.type === 'lock' ? <Lock className="h-4 w-4" /> :
+                           tx.type === 'release' ? <Unlock className="h-4 w-4" /> :
+                           tx.type === 'refund' ? <RefreshCw className="h-4 w-4" /> :
+                           <AlertTriangle className="h-4 w-4" />}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium capitalize">{tx.type}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(tx.timestamp).toLocaleString()}
+                          </p>
+                        </div>
+                        <p className={`font-bold ${
+                          tx.type === 'lock' || tx.type === 'penalty' ? 'text-red-600' : 'text-emerald-600'
+                        }`}>
+                          {tx.type === 'lock' || tx.type === 'penalty' ? '-' : '+'}₹{tx.amount.toFixed(0)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Escrow Info Card */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5 text-blue-600" />
+                  How Escrow Protection Works
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="text-center p-4 bg-blue-50 rounded-xl">
+                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                      <Lock className="h-6 w-6 text-blue-600" />
+                    </div>
+                    <h4 className="font-semibold">1. Lock Payment</h4>
+                    <p className="text-xs text-muted-foreground mt-1">Your payment is locked when you place an order</p>
+                  </div>
+                  <div className="text-center p-4 bg-orange-50 rounded-xl">
+                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                      <Package className="h-6 w-6 text-orange-600" />
+                    </div>
+                    <h4 className="font-semibold">2. Preparation</h4>
+                    <p className="text-xs text-muted-foreground mt-1">Pharmacy prepares your order</p>
+                  </div>
+                  <div className="text-center p-4 bg-purple-50 rounded-xl">
+                    <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                      <Truck className="h-6 w-6 text-purple-600" />
+                    </div>
+                    <h4 className="font-semibold">3. Delivery</h4>
+                    <p className="text-xs text-muted-foreground mt-1">Order is delivered to you</p>
+                  </div>
+                  <div className="text-center p-4 bg-emerald-50 rounded-xl">
+                    <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                      <Unlock className="h-6 w-6 text-emerald-600" />
+                    </div>
+                    <h4 className="font-semibold">4. Release</h4>
+                    <p className="text-xs text-muted-foreground mt-1">Payment released to pharmacy on collection</p>
+                  </div>
+                </div>
+                <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                    <div>
+                      <h4 className="font-semibold text-amber-800">No-Show Protection</h4>
+                      <p className="text-sm text-amber-700">
+                        If you don't collect your order within 24 hours, a {(PENALTY_RATE * 100).toFixed(0)}% penalty is applied and {((1 - PENALTY_RATE) * 100).toFixed(0)}% is refunded.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
       </Tabs>
+
+      {/* Wallet Connect Dialog */}
+      <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5" />
+              Connect MetaMask Wallet
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl text-center">
+              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Wallet className="h-10 w-10 text-white" />
+              </div>
+              <h3 className="text-xl font-bold mb-2">Secure Escrow Payments</h3>
+              <p className="text-sm text-muted-foreground">
+                Connect your MetaMask wallet to lock payments in escrow. 
+                Funds are released to pharmacy only after you collect your order.
+              </p>
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 bg-emerald-50 rounded-xl">
+                <CheckCircle className="h-5 w-5 text-emerald-600" />
+                <span className="text-sm">Full refund if cancelled before preparation</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
+                <Shield className="h-5 w-5 text-blue-600" />
+                <span className="text-sm">24-hour collection window with protection</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                <span className="text-sm">{(PENALTY_RATE * 100).toFixed(0)}% penalty for no-show, rest refunded</span>
+              </div>
+            </div>
+
+            <Button 
+              className="w-full h-14 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-lg font-bold"
+              onClick={handleConnectWallet}
+              disabled={isMetaMaskLoading || !isMetaMaskInstalled}
+            >
+              {isMetaMaskLoading ? (
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              ) : (
+                <Wallet className="h-5 w-5 mr-2" />
+              )}
+              {!isMetaMaskInstalled ? 'Install MetaMask Extension' : 'Connect MetaMask'}
+            </Button>
+            
+            {!isMetaMaskInstalled && (
+              <p className="text-xs text-center text-muted-foreground">
+                <a href="https://metamask.io/download/" target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline">
+                  Download MetaMask
+                </a>
+                {" "}browser extension to continue
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Prescription Upload Dialog */}
       <Dialog open={prescriptionDialogOpen} onOpenChange={setPrescriptionDialogOpen}>
@@ -828,13 +1400,21 @@ export default function MedicationsSection() {
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <span>Delivery</span>
-                  <span>₹50</span>
+                  <span>₹{DELIVERY_FEE}</span>
                 </div>
                 <div className="h-px bg-muted my-2" />
                 <div className="flex justify-between font-bold text-lg">
-                  <span>Total</span>
-                  <span>₹{(totalCartAmount + 50).toFixed(0)}</span>
+                  <span>Total to Lock</span>
+                  <span>₹{totalWithDelivery.toFixed(0)}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* Escrow Info */}
+            <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl">
+              <div className="flex items-center gap-2 text-purple-700 text-sm">
+                <Lock className="h-4 w-4" />
+                <span>Amount will be locked in escrow until collection</span>
               </div>
             </div>
             
@@ -860,10 +1440,14 @@ export default function MedicationsSection() {
               <Button
                 className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 rounded-xl"
                 onClick={confirmOrder}
-                disabled={!customerPhone || customerPhone.length < 10}
+                disabled={!customerPhone || customerPhone.length < 10 || isProcessingOrder}
               >
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Place Order ₹{(totalCartAmount + 50).toFixed(0)}
+                {isProcessingOrder ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Lock className="h-4 w-4 mr-2" />
+                )}
+                Lock ₹{totalWithDelivery.toFixed(0)}
               </Button>
             </div>
           </div>
@@ -872,7 +1456,7 @@ export default function MedicationsSection() {
 
       {/* Order Details Dialog */}
       <Dialog open={orderDetailDialogOpen} onOpenChange={setOrderDetailDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Order #{selectedOrder?.id.slice(-6)}</DialogTitle>
           </DialogHeader>
@@ -890,10 +1474,58 @@ export default function MedicationsSection() {
                     </p>
                   </div>
                 </div>
-                <Badge variant={selectedOrder.status === 'delivered' ? "default" : "secondary"}>
-                  ₹{selectedOrder.totalAmount.toFixed(0)}
-                </Badge>
+                <div className="text-right">
+                  <Badge variant={selectedOrder.status === 'delivered' ? "default" : "secondary"}>
+                    ₹{selectedOrder.totalWithDelivery?.toFixed(0) || selectedOrder.totalAmount?.toFixed(0)}
+                  </Badge>
+                  {selectedOrder.escrowStatus && (
+                    <div className="mt-1">
+                      {getEscrowStatusBadge(selectedOrder)}
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Escrow Details */}
+              {selectedOrder.escrowLockedAmount && (
+                <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+                  <CardContent className="p-4">
+                    <h4 className="font-semibold flex items-center gap-2 mb-3">
+                      <Wallet className="h-4 w-4" />
+                      Escrow Details
+                    </h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Locked Amount</p>
+                        <p className="font-bold">₹{selectedOrder.escrowLockedAmount.toFixed(0)}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Wallet</p>
+                        <p className="font-mono text-xs">{selectedOrder.walletAddress?.slice(0, 10)}...</p>
+                      </div>
+                      {selectedOrder.refundAmount !== null && selectedOrder.refundAmount !== undefined && (
+                        <div>
+                          <p className="text-muted-foreground">Refund Amount</p>
+                          <p className="font-bold text-green-600">₹{selectedOrder.refundAmount.toFixed(0)}</p>
+                        </div>
+                      )}
+                      {selectedOrder.penaltyAmount !== null && selectedOrder.penaltyAmount !== undefined && selectedOrder.penaltyAmount > 0 && (
+                        <div>
+                          <p className="text-muted-foreground">Penalty</p>
+                          <p className="font-bold text-red-600">₹{selectedOrder.penaltyAmount.toFixed(0)}</p>
+                        </div>
+                      )}
+                    </div>
+                    {selectedOrder.collectionDeadline && (
+                      <div className="mt-3 pt-3 border-t border-purple-200">
+                        <p className="text-xs text-muted-foreground">
+                          Collection Deadline: {new Date(selectedOrder.collectionDeadline).toLocaleString()}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardContent className="p-6">
@@ -965,6 +1597,71 @@ export default function MedicationsSection() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Action Buttons */}
+              <div className="space-y-3 pt-4 border-t">
+                {/* Simulate Status Progression (Demo) */}
+                {['paid_locked', 'preparing'].includes(selectedOrder.status) && (
+                  <Button 
+                    variant="outline" 
+                    className="w-full rounded-xl"
+                    onClick={() => simulateNextStatus(selectedOrder)}
+                  >
+                    <Activity className="h-4 w-4 mr-2" />
+                    Simulate Next Status (Demo)
+                  </Button>
+                )}
+
+                {/* Mark as Collected */}
+                {selectedOrder.status === 'out_for_delivery' && (
+                  <Button 
+                    className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-green-600"
+                    onClick={() => handleMarkCollected(selectedOrder)}
+                    disabled={isProcessingOrder}
+                  >
+                    {isProcessingOrder ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                    )}
+                    Mark as Collected (Release Escrow)
+                  </Button>
+                )}
+
+                {/* Mark No-Show */}
+                {selectedOrder.status === 'out_for_delivery' && (
+                  <Button 
+                    variant="outline"
+                    className="w-full rounded-xl border-amber-300 text-amber-700 hover:bg-amber-50"
+                    onClick={() => handleMarkNoShow(selectedOrder)}
+                    disabled={isProcessingOrder}
+                  >
+                    {isProcessingOrder ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                    )}
+                    Mark No-Show ({(PENALTY_RATE * 100).toFixed(0)}% Penalty)
+                  </Button>
+                )}
+
+                {/* Cancel Order */}
+                {['pending_payment', 'paid_locked', 'preparing'].includes(selectedOrder.status) && (
+                  <Button 
+                    variant="destructive"
+                    className="w-full rounded-xl"
+                    onClick={() => handleCancelOrder(selectedOrder)}
+                    disabled={isProcessingOrder}
+                  >
+                    {isProcessingOrder ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Ban className="h-4 w-4 mr-2" />
+                    )}
+                    Cancel Order {selectedOrder.status === 'preparing' ? '(50% Penalty)' : '(Full Refund)'}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
