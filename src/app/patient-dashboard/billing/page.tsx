@@ -22,12 +22,53 @@ import {
   Filter,
   TrendingUp,
   Shield,
+  ShieldCheck, // Added
+  Package, // Added
+  UserCog, // Added
+  ShoppingCart // Added
 } from "lucide-react";
 import { mockBills } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useMetaMask } from "@/hooks/use-metamask"; // Added
+import { toast } from "sonner"; // Added
+import { Label } from "@/components/ui/label"; // Ensure Label is imported
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"; // Ensure Card components are imported
+import { Input } from "@/components/ui/input"; // Ensure Input is imported
+
+// Shared Interfaces (duplicated for speed, ideally in a types file)
+interface Medicine {
+  id: string;
+  name: string;
+  brand: string;
+  price: number;
+  image: string;
+  // ... other fields optional for billing view
+}
+
+interface CartItem {
+  medicine: Medicine;
+  quantity: number;
+  quantityType: 'half' | 'full' | 'double';
+}
+
+interface Order {
+  id: string;
+  items: CartItem[];
+  total: number; // This is the Bill Total
+  platformFee?: number; // Added
+  date: string;
+  status: 'ordered' | 'delivered';
+}
 
 export default function BillingPage() {
   const [typeFilter, setTypeFilter] = useState("all");
+
+  // Medication Orders State
+  const [medOrders, setMedOrders] = useState<Order[]>([]);
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const SECURITY_DEPOSIT = 100;
+
+  const { refundAmount } = useMetaMask();
 
   const paidBills = mockBills.filter((b) => b.status === "paid");
   const unpaidBills = mockBills.filter((b) => b.status === "unpaid");
@@ -44,6 +85,33 @@ export default function BillingPage() {
     typeFilter === "all"
       ? mockBills
       : mockBills.filter((b) => b.type === typeFilter);
+
+  // Load Medication Orders
+  useState(() => {
+    // Only access localStorage on client
+    if (typeof window !== 'undefined') {
+      const savedOrders = localStorage.getItem("medicationOrders");
+      if (savedOrders) setMedOrders(JSON.parse(savedOrders));
+    }
+  });
+
+  // Handle Collection/Refund
+  const handleCollectOrder = async (orderId: string) => {
+    try {
+      const success = await refundAmount(SECURITY_DEPOSIT);
+      if (!success) throw new Error("Refund failed");
+
+      const updatedOrders = medOrders.map(order =>
+        order.id === orderId ? { ...order, status: 'delivered' } : order
+      ) as Order[];
+
+      setMedOrders(updatedOrders);
+      localStorage.setItem("medicationOrders", JSON.stringify(updatedOrders));
+      toast.success(`Order collected! Deposit of ₹${SECURITY_DEPOSIT} refunded.`);
+    } catch (error) {
+      toast.error("Failed to process refund. Please try again.");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -93,7 +161,83 @@ export default function BillingPage() {
         />
       </div>
 
+      {/* Medication Orders Section (Moved from Medications Page) */}
+      <div className="rounded-2xl border border-indigo-100 bg-white p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-foreground flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5 text-indigo-600" />
+              Medication Orders
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Manage your pharmacy orders and refundable deposits
+            </p>
+          </div>
+
+          {/* Admin Toggle Simulation */}
+          <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-xl border">
+            <UserCog className={`h-4 w-4 ${isAdminMode ? 'text-primary' : 'text-muted-foreground'}`} />
+            <Label htmlFor="admin-mode" className="text-sm cursor-pointer select-none">Admin Mode</Label>
+            <input
+              id="admin-mode"
+              type="checkbox"
+              checked={isAdminMode}
+              onChange={(e) => setIsAdminMode(e.target.checked)}
+              className="h-4 w-4 accent-primary"
+            />
+          </div>
+        </div>
+
+        {medOrders.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl">
+            <Package className="h-10 w-10 mx-auto mb-3 opacity-20" />
+            <p>No medication orders found.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {medOrders.map(order => (
+              <div key={order.id} className="p-4 border rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between hover:bg-muted/5 transition-colors gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-foreground">Order #{order.id.slice(-6)}</p>
+                    <Badge variant="outline" className="text-xs">{order.date}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {order.items.length} items • Bill: ₹{order.total.toFixed(0)}
+                    {order.platformFee ? ` (incl. ₹${order.platformFee.toFixed(0)} fee)` : ''}
+                  </p>
+                  <div className="text-xs mt-2 text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 w-fit px-2 py-1 rounded-md">
+                    <ShieldCheck className="h-3 w-3" />
+                    {order.status === 'delivered' ? `Deposit ₹${SECURITY_DEPOSIT} Refunded` : `Deposit ₹${SECURITY_DEPOSIT} Locked`}
+                  </div>
+                </div>
+                <div className="text-right flex items-center gap-4 w-full md:w-auto justify-end">
+                  <div>
+                    <Badge className={cn("px-3 py-1", order.status === 'delivered' ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border-emerald-200" : "bg-amber-100 text-amber-700 hover:bg-amber-200 border-amber-200")}>
+                      {order.status === 'delivered' ? 'Collected' : 'Pending Collection'}
+                    </Badge>
+                  </div>
+
+                  {/* Only show Collect Button in Admin Mode */}
+                  {isAdminMode && order.status !== 'delivered' && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                      onClick={() => handleCollectOrder(order.id)}
+                    >
+                      Admin: Verify & Refund
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-3">
+        {/* ... existing chart logic ... */}
+
         <div className="lg:col-span-2 space-y-6">
           <div className="rounded-2xl border border-border bg-white p-6">
             <div className="mb-4 flex items-center justify-between">

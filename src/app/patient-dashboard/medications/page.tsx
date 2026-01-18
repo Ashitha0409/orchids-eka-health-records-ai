@@ -18,46 +18,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
   Plus,
-  Upload,
   Search,
   MapPin,
-  Phone,
   Clock,
   Star,
-  ShoppingCart,
-  Camera,
-  Package,
-  Truck,
-  CheckCircle2,
-  Filter,
-  Heart,
-  Shield,
   Pill,
-  X,
-  Plus as PlusIcon,
-  PhoneCall,
-  Package2,
+  Shield,
+  Heart,
   Activity,
   Zap,
-  FileText,
-  CheckCircle,
-  XCircle,
   Loader2,
-  MapPinIcon,
   Wallet,
-  AlertTriangle,
-  RefreshCw,
-  Ban,
-  DollarSign,
-  Lock,
-  Unlock,
+  Bell,
+  Volume2,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  Languages,
+  PlayCircle,
+  ShoppingCart,
+  Package,
+  History,
+  ShieldCheck,
+  UserCog
 } from "lucide-react";
 import { toast } from "sonner";
 import { useMetaMask } from "@/hooks/use-metamask";
+
+// --- Interfaces ---
 
 interface Medicine {
   id: string;
@@ -76,45 +68,6 @@ interface Medicine {
   description: string;
 }
 
-interface CartItem {
-  medicine: Medicine;
-  quantity: number;
-  quantityType: 'single' | 'double' | 'half';
-  prescriptionImage?: string;
-}
-
-type OrderStatus = 
-  | 'pending_payment'
-  | 'paid_locked'
-  | 'preparing'
-  | 'out_for_delivery'
-  | 'delivered'
-  | 'cancelled'
-  | 'no_show';
-
-interface Order {
-  id: string;
-  _id?: string;
-  items: CartItem[];
-  pharmacy: Pharmacy;
-  customerPhone: string;
-  totalAmount: number;
-  totalWithDelivery: number;
-  deliveryFee: number;
-  status: OrderStatus;
-  orderDate: string;
-  estimatedDelivery: string;
-  prescriptionImage?: string;
-  // Escrow fields
-  walletAddress?: string;
-  escrowLockedAmount?: number;
-  escrowTransactionId?: string;
-  escrowStatus?: 'locked' | 'released' | 'refunded' | 'partial_refund' | 'penalty_applied';
-  collectionDeadline?: string;
-  refundAmount?: number;
-  penaltyAmount?: number;
-}
-
 interface Pharmacy {
   id: string;
   name: string;
@@ -127,27 +80,61 @@ interface Pharmacy {
   phone: string;
 }
 
-const DELIVERY_FEE = 50;
+interface Reminder {
+  id: string;
+  medicineName: string;
+  time: string; // HH:MM format
+  dosage: string;
+  image?: string;
+  enabled: boolean;
+}
+
+interface CartItem {
+  medicine: Medicine;
+  quantity: number;
+  quantityType: 'half' | 'full' | 'double';
+}
+
+interface Order {
+  id: string;
+  items: CartItem[];
+  total: number;
+  platformFee?: number; // Added
+  date: string;
+  status: 'ordered' | 'delivered';
+}
+
+const SUPPORTED_LANGUAGES = [
+  { code: 'en-US', name: 'English', label: 'Time to take your medication' },
+  { code: 'hi-IN', name: 'Hindi', label: 'दवा लेने का समय हो गया है' },
+  { code: 'es-ES', name: 'Spanish', label: 'Es hora de tomar su medicina' },
+  { code: 'fr-FR', name: 'French', label: 'Il est temps de prendre vos médicaments' },
+  { code: 'te-IN', name: 'Telugu', label: 'మందులు వేసుకునే సమయం అయ్యింది' },
+  { code: 'ta-IN', name: 'Tamil', label: 'மருந்து எடுத்துக்கொள்ளும் நேரம்' },
+  { code: 'kn-IN', name: 'Kannada', label: 'ಔಷಧಿ ತೆಗೆದುಕೊಳ್ಳುವ ಸಮಯವಾಗಿದೆ' },
+];
 
 export default function MedicationsSection() {
   const [activeTab, setActiveTab] = useState("list");
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [prescriptionDialogOpen, setPrescriptionDialogOpen] = useState(false);
-  const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
-  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
-  const [orderDetailDialogOpen, setOrderDetailDialogOpen] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
-  const [selectedMedicine, setSelectedMedicine] = useState<Medicine | null>(null);
-  const [selectedPharmacy, setSelectedPharmacy] = useState<Pharmacy | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [prescriptionImage, setPrescriptionImage] = useState<string | null>(null);
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [isProcessingOrder, setIsProcessingOrder] = useState(false);
+
+  // Cart & Orders State
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [selectedQuantities, setSelectedQuantities] = useState<Record<string, 'half' | 'full' | 'double'>>({});
+
+  // Reminder State
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [newReminderMed, setNewReminderMed] = useState("");
+  const [newReminderTime, setNewReminderTime] = useState("");
+  const [newReminderDosage, setNewReminderDosage] = useState("");
+  const [newReminderImage, setNewReminderImage] = useState<string | undefined>(undefined);
+  const [audioLanguage, setAudioLanguage] = useState("en-US");
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // MetaMask hook
   const {
@@ -157,17 +144,14 @@ export default function MedicationsSection() {
     isConnected,
     isMetaMaskInstalled,
     isLoading: isMetaMaskLoading,
-    transactions,
     connect: connectWallet,
     disconnect: disconnectWallet,
     lockAmount,
-    releaseAmount,
-    refundAmount,
-    chargePenalty,
-    addFunds,
-    resetBalance,
-    PENALTY_RATE,
+    refundAmount
   } = useMetaMask();
+
+  const SECURITY_DEPOSIT = 100;
+  const [isAdminMode, setIsAdminMode] = useState(false); // Admin simulation state
 
   const categories = [
     { id: "all", name: "All Medicines", icon: Pill },
@@ -181,6 +165,18 @@ export default function MedicationsSection() {
   ];
 
   useEffect(() => {
+    // Load Voices
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      setAvailableVoices(voices);
+    };
+
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    // Mock Data and Loaders
     const extendedMedicines: Medicine[] = [
       {
         id: "1",
@@ -303,65 +299,271 @@ export default function MedicationsSection() {
     setMedicines(extendedMedicines);
     setPharmacies(mockPharmacies);
 
-    // Load orders from localStorage
-    const savedOrders = localStorage.getItem("userOrders");
-    if (savedOrders) {
-      setOrders(JSON.parse(savedOrders));
-    }
+    const savedReminders = localStorage.getItem("medicationReminders");
+    if (savedReminders) setReminders(JSON.parse(savedReminders));
+
+    const savedLang = localStorage.getItem("medicationAudioLanguage");
+    if (savedLang) setAudioLanguage(savedLang);
+
+    // Load Cart/Orders
+    const savedCart = localStorage.getItem("medicationCart");
+    if (savedCart) setCart(JSON.parse(savedCart));
+    const savedOrders = localStorage.getItem("medicationOrders");
+    if (savedOrders) setOrders(JSON.parse(savedOrders));
+
   }, []);
 
+  // Persistence Effects
+  useEffect(() => localStorage.setItem("medicationReminders", JSON.stringify(reminders)), [reminders]);
+  useEffect(() => localStorage.setItem("medicationAudioLanguage", audioLanguage), [audioLanguage]);
+  useEffect(() => localStorage.setItem("medicationCart", JSON.stringify(cart)), [cart]);
+  useEffect(() => localStorage.setItem("medicationOrders", JSON.stringify(orders)), [orders]);
+
+  // Check Reminders Effect
   useEffect(() => {
-    localStorage.setItem("userOrders", JSON.stringify(orders));
-  }, [orders]);
+    const checkReminders = () => {
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-  const totalCartAmount = cart.reduce((sum, item) => {
-    const multiplier = item.quantityType === 'double' ? 1.8 : item.quantityType === 'half' ? 0.6 : 1;
-    return sum + (item.medicine.price * multiplier * item.quantity);
-  }, 0);
+      reminders.forEach(reminder => {
+        if (reminder.enabled && reminder.time === currentTime && now.getSeconds() === 0) {
+          triggerAlarm(reminder);
+        }
+      });
+    };
 
-  const totalWithDelivery = totalCartAmount + DELIVERY_FEE;
+    const interval = setInterval(checkReminders, 1000);
+    return () => clearInterval(interval);
+  }, [reminders, audioLanguage]);
+
+  const playChime = () => {
+    // Create a simple oscillator beep/chime
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContext) return;
+
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    // Nice "Ding" sound settings
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.3);
+
+    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  };
+
+  const getNativeVoice = (langCode: string) => {
+    // 1. Try exact match (e.g. 'kn-IN')
+    let voice = availableVoices.find(v => v.lang === langCode);
+
+    // 2. Try prefix match (e.g. 'kn')
+    if (!voice) {
+      const shortCode = langCode.split('-')[0];
+      voice = availableVoices.find(v => v.lang.startsWith(shortCode));
+    }
+
+    return voice;
+  };
+
+  const speakText = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = audioLanguage;
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+
+      const voice = getNativeVoice(audioLanguage);
+      if (voice) {
+        utterance.voice = voice;
+      }
+
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const testVoice = () => {
+    const selectedLangObj = SUPPORTED_LANGUAGES.find(l => l.code === audioLanguage);
+    const text = selectedLangObj?.label || "Test Audio";
+
+    playChime();
+
+    // Small delay to let chime finish start
+    setTimeout(() => {
+      speakText(text);
+      toast.info(`Playing test audio for ${selectedLangObj?.name}...`);
+    }, 500);
+  };
+
+  const triggerAlarm = (reminder: Reminder) => {
+    const selectedLangObj = SUPPORTED_LANGUAGES.find(l => l.code === audioLanguage) || SUPPORTED_LANGUAGES[0];
+    const message = `${selectedLangObj.label}: ${reminder.medicineName}`;
+
+    // 1. Vibration
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate([500, 200, 500, 200, 1000]);
+    }
+
+    // 2. Chime + Audio/Speech
+    playChime();
+    setTimeout(() => {
+      speakText(message);
+    }, 500);
+
+    // 3. Visual Toast
+    toast("Medication Reminder!", {
+      description: message,
+      icon: <Bell className="h-5 w-5 text-primary animate-bounce" />,
+      duration: 10000,
+      action: {
+        label: "I took it",
+        onClick: () => {
+          window.speechSynthesis.cancel();
+          toast.success("Medication mocked as taken!");
+        }
+      }
+    });
+  };
+
+  // Ecommerce Logic
+  const handleQuantityChange = (medId: string, val: 'half' | 'full' | 'double') => {
+    setSelectedQuantities(prev => ({ ...prev, [medId]: val }));
+  };
+
+  const addToCart = (medicine: Medicine) => {
+    const qtyType = selectedQuantities[medicine.id] || 'full';
+    let multiplier = 1;
+    if (qtyType === 'half') multiplier = 0.5;
+    if (qtyType === 'double') multiplier = 2;
+
+    const newItem: CartItem = {
+      medicine,
+      quantityType: qtyType,
+      quantity: 1
+    };
+
+    setCart(prev => [...prev, newItem]);
+    toast.success(`Added ${medicine.name} (${qtyType}) to cart`);
+  };
+
+  const removeFromCart = (index: number) => {
+    setCart(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const placeOrder = async () => {
+    if (cart.length === 0) return;
+
+    if (!isConnected) {
+      toast.error("Please connect your wallet first to pay the security deposit.");
+      setWalletDialogOpen(true);
+      return;
+    }
+
+    // Calculate total bill (user still pays this normally at shop, but deposit is separate/part of it)
+    // User requirement: "remove 100 rs ... get it back".
+    // This implies the 100rs is a BOND.
+
+    const total = cart.reduce((sum, item) => {
+      let mult = 1;
+      if (item.quantityType === 'half') mult = 0.5;
+      if (item.quantityType === 'double') mult = 2;
+      return sum + (item.medicine.price * mult);
+    }, 0);
+
+    if (balance < SECURITY_DEPOSIT) {
+      toast.error(`Insufficient wallet balance. You need ₹${SECURITY_DEPOSIT} for the security deposit.`);
+      return;
+    }
+
+    try {
+      // Lock FIXED amount
+      const success = await lockAmount(SECURITY_DEPOSIT);
+      if (!success) throw new Error("Transaction failed");
+
+      const newOrder: Order = {
+        id: Date.now().toString(),
+        items: [...cart],
+        total,
+        date: new Date().toLocaleDateString(),
+        status: 'ordered'
+      };
+
+      setOrders(prev => [newOrder, ...prev]);
+      setCart([]);
+      setActiveTab("orders");
+      toast.success(`Order placed! Security deposit of ₹${SECURITY_DEPOSIT} locked.`);
+
+    } catch (error) {
+      toast.error("Failed to process security deposit. Please try again.");
+    }
+  };
+
+  const handleCollectOrder = async (orderId: string) => {
+    try {
+      // Refund FIXED amount
+      const success = await refundAmount(SECURITY_DEPOSIT);
+      if (!success) throw new Error("Refund failed");
+
+      setOrders(prev => prev.map(order =>
+        order.id === orderId ? { ...order, status: 'delivered' } : order
+      ));
+      toast.success(`Order collected! Deposit of ₹${SECURITY_DEPOSIT} refunded.`);
+    } catch (error) {
+      toast.error("Failed to process refund. Please try again.");
+    }
+  };
 
   const filteredMedicines = medicines.filter(medicine => {
     const matchesSearch = medicine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          medicine.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          medicine.description.toLowerCase().includes(searchTerm.toLowerCase());
+      medicine.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      medicine.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === "all" || medicine.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
-  const addToCart = (medicine: Medicine, quantityType: 'single' | 'double' | 'half') => {
-    setCart(prev => {
-      const existing = prev.find(item => 
-        item.medicine.id === medicine.id && item.quantityType === quantityType
-      );
-      if (existing) {
-        return prev.map(item =>
-          item.medicine.id === medicine.id && item.quantityType === quantityType
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
-      }
-      return [...prev, { medicine, quantity: 1, quantityType }];
-    });
-    toast.success(`${medicine.name} (${quantityType}) added to cart!`);
-    setQuantityDialogOpen(false);
-  };
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setPrescriptionImage(e.target?.result as string);
-        toast.success("Prescription uploaded successfully!");
-      };
-      reader.readAsDataURL(file);
+  const handleAddReminder = () => {
+    if (!newReminderMed || !newReminderTime) {
+      toast.error("Please fill in medicine name and time");
+      return;
     }
+
+    const reminder: Reminder = {
+      id: Date.now().toString(),
+      medicineName: newReminderMed,
+      time: newReminderTime,
+      dosage: newReminderDosage || "As prescribed",
+      image: newReminderImage,
+      enabled: true
+    };
+
+    setReminders(prev => [...prev, reminder]);
+    setNewReminderMed("");
+    setNewReminderTime("");
+    setNewReminderDosage("");
+    setNewReminderImage(undefined);
+    toast.success("Reminder set successfully!");
   };
 
-  const openQuantityDialog = (medicine: Medicine) => {
-    setSelectedMedicine(medicine);
-    setQuantityDialogOpen(true);
+  const handleDeleteReminder = (id: string) => {
+    setReminders(prev => prev.filter(r => r.id !== id));
+    toast.success("Reminder deleted");
+  };
+
+  const quickAddReminder = (medicine: Medicine) => {
+    setNewReminderMed(medicine.name);
+    setNewReminderDosage(medicine.dosage);
+    setNewReminderImage(medicine.image);
+    setActiveTab("timings");
+    toast.info("Set a time for your medication");
   };
 
   const handleConnectWallet = async () => {
@@ -374,273 +576,31 @@ export default function MedicationsSection() {
     }
   };
 
-  const placeOrderWithPharmacy = (pharmacy: Pharmacy) => {
-    if (!prescriptionImage || cart.length === 0) {
-      toast.error("Please upload prescription and add medicines first!");
-      return;
-    }
-    
-    if (!isConnected) {
-      toast.error("Please connect your MetaMask wallet first!");
-      setWalletDialogOpen(true);
-      return;
-    }
-
-    if (balance < totalWithDelivery) {
-      toast.error(`Insufficient balance! You have ₹${balance.toFixed(0)}, need ₹${totalWithDelivery.toFixed(0)}`);
-      return;
-    }
-
-    setSelectedPharmacy(pharmacy);
-    setPhoneDialogOpen(true);
-  };
-
-  const confirmOrder = async () => {
-    if (!customerPhone || !selectedPharmacy || customerPhone.length < 10) {
-      toast.error("Please provide valid phone number!");
-      return;
-    }
-
-    if (!isConnected || !walletAddress) {
-      toast.error("Please connect MetaMask wallet first!");
-      return;
-    }
-
-    setIsProcessingOrder(true);
-
-    try {
-      // Lock amount in escrow
-      const escrowTxId = `tx_${Date.now()}`;
-      await lockAmount(totalWithDelivery, escrowTxId);
-
-      const newOrder: Order = {
-        id: `order-${Date.now()}`,
-        items: [...cart],
-        pharmacy: selectedPharmacy,
-        customerPhone: customerPhone,
-        totalAmount: totalCartAmount,
-        totalWithDelivery: totalWithDelivery,
-        deliveryFee: DELIVERY_FEE,
-        status: 'paid_locked',
-        orderDate: new Date().toISOString(),
-        estimatedDelivery: selectedPharmacy.deliveryTime,
-        prescriptionImage: prescriptionImage || undefined,
-        // Escrow fields
-        walletAddress: walletAddress,
-        escrowLockedAmount: totalWithDelivery,
-        escrowTransactionId: escrowTxId,
-        escrowStatus: 'locked',
-        collectionDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      };
-
-      setOrders(prev => [...prev, newOrder]);
-      setCart([]);
-      setPrescriptionImage(null);
-      setCustomerPhone("");
-      setPhoneDialogOpen(false);
-      
-      toast.success(
-        `Order placed! ₹${totalWithDelivery.toFixed(0)} locked in escrow. Collect within 24hrs.`,
-        { duration: 5000 }
-      );
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to process payment");
-    } finally {
-      setIsProcessingOrder(false);
-    }
-  };
-
-  // Order actions
-  const handleCancelOrder = async (order: Order) => {
-    if (!['pending_payment', 'paid_locked', 'preparing'].includes(order.status)) {
-      toast.error("Order cannot be cancelled at this stage");
-      return;
-    }
-
-    setIsProcessingOrder(true);
-    try {
-      const escrowAmount = order.escrowLockedAmount || 0;
-      
-      if (order.status === 'paid_locked') {
-        // Full refund before preparation
-        await refundAmount(escrowAmount, order.id);
-        toast.success(`Order cancelled! Full refund of ₹${escrowAmount.toFixed(0)} processed.`);
-      } else if (order.status === 'preparing') {
-        // Partial refund (50% penalty)
-        const penaltyAmt = escrowAmount * 0.5;
-        const refundAmt = escrowAmount - penaltyAmt;
-        await refundAmount(refundAmt, order.id);
-        toast.warning(`Order cancelled! ₹${refundAmt.toFixed(0)} refunded (50% penalty applied).`);
-      }
-
-      setOrders(prev => prev.map(o => 
-        o.id === order.id 
-          ? { 
-              ...o, 
-              status: 'cancelled' as OrderStatus,
-              escrowStatus: order.status === 'paid_locked' ? 'refunded' : 'partial_refund',
-              refundAmount: order.status === 'paid_locked' ? escrowAmount : escrowAmount * 0.5,
-              penaltyAmount: order.status === 'paid_locked' ? 0 : escrowAmount * 0.5,
-            }
-          : o
-      ));
-      setOrderDetailDialogOpen(false);
-    } catch (error) {
-      toast.error("Failed to cancel order");
-    } finally {
-      setIsProcessingOrder(false);
-    }
-  };
-
-  const handleMarkCollected = async (order: Order) => {
-    if (order.status !== 'out_for_delivery') {
-      toast.error("Order must be out for delivery to mark as collected");
-      return;
-    }
-
-    setIsProcessingOrder(true);
-    try {
-      // Release escrow to pharmacy
-      await releaseAmount(order.escrowLockedAmount || 0, order.id);
-      
-      setOrders(prev => prev.map(o => 
-        o.id === order.id 
-          ? { ...o, status: 'delivered' as OrderStatus, escrowStatus: 'released' }
-          : o
-      ));
-      
-      toast.success("Order marked as delivered! Escrow released to pharmacy.");
-      setOrderDetailDialogOpen(false);
-    } catch (error) {
-      toast.error("Failed to process collection");
-    } finally {
-      setIsProcessingOrder(false);
-    }
-  };
-
-  const handleMarkNoShow = async (order: Order) => {
-    if (order.status !== 'out_for_delivery') {
-      toast.error("Can only mark no-show for orders out for delivery");
-      return;
-    }
-
-    setIsProcessingOrder(true);
-    try {
-      const escrowAmount = order.escrowLockedAmount || 0;
-      const result = await chargePenalty(escrowAmount, order.id);
-      
-      setOrders(prev => prev.map(o => 
-        o.id === order.id 
-          ? { 
-              ...o, 
-              status: 'no_show' as OrderStatus,
-              escrowStatus: 'penalty_applied',
-              penaltyAmount: result.penaltyAmount,
-              refundAmount: result.refundAmount,
-            }
-          : o
-      ));
-      
-      toast.warning(
-        `No-show recorded! Penalty: ₹${result.penaltyAmount.toFixed(0)}, Refund: ₹${result.refundAmount.toFixed(0)}`,
-        { duration: 5000 }
-      );
-      setOrderDetailDialogOpen(false);
-    } catch (error) {
-      toast.error("Failed to process no-show");
-    } finally {
-      setIsProcessingOrder(false);
-    }
-  };
-
-  // Simulate status progression (for demo purposes)
-  const simulateNextStatus = (order: Order) => {
-    const statusFlow: Record<string, OrderStatus> = {
-      'paid_locked': 'preparing',
-      'preparing': 'out_for_delivery',
-    };
-    
-    const nextStatus = statusFlow[order.status];
-    if (nextStatus) {
-      setOrders(prev => prev.map(o => 
-        o.id === order.id ? { ...o, status: nextStatus } : o
-      ));
-      toast.success(`Order status updated to: ${getStatusText(nextStatus)}`);
-    }
-  };
-
-  const getStatusColor = (status: OrderStatus) => {
-    switch (status) {
-      case 'pending_payment': return 'bg-gray-100 text-gray-800';
-      case 'paid_locked': return 'bg-blue-100 text-blue-800';
-      case 'preparing': return 'bg-orange-100 text-orange-800';
-      case 'out_for_delivery': return 'bg-purple-100 text-purple-800';
-      case 'delivered': return 'bg-emerald-100 text-emerald-800';
-      case 'cancelled': return 'bg-red-100 text-red-800';
-      case 'no_show': return 'bg-amber-100 text-amber-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getStatusIcon = (status: OrderStatus) => {
-    const icons = {
-      pending_payment: <Wallet className="h-6 w-6" />,
-      paid_locked: <Lock className="h-6 w-6" />,
-      preparing: <Activity className="h-6 w-6" />,
-      out_for_delivery: <Truck className="h-6 w-6" />,
-      delivered: <CheckCircle2 className="h-6 w-6" />,
-      cancelled: <XCircle className="h-6 w-6" />,
-      no_show: <AlertTriangle className="h-6 w-6" />
-    };
-    return icons[status] || <Clock className="h-6 w-6" />;
-  };
-
-  const getStatusText = (status: OrderStatus) => {
-    const texts = {
-      pending_payment: 'Pending Payment',
-      paid_locked: 'Payment Locked',
-      preparing: 'Preparing',
-      out_for_delivery: 'Out for Delivery',
-      delivered: 'Delivered & Collected',
-      cancelled: 'Cancelled',
-      no_show: 'No Show'
-    };
-    return texts[status] || 'Processing';
-  };
-
-  const getEscrowStatusBadge = (order: Order) => {
-    if (!order.escrowStatus) return null;
-    
-    const badges: Record<string, { color: string; text: string }> = {
-      locked: { color: 'bg-blue-500', text: '🔒 Escrow Locked' },
-      released: { color: 'bg-emerald-500', text: '✅ Released to Pharmacy' },
-      refunded: { color: 'bg-green-500', text: '💰 Fully Refunded' },
-      partial_refund: { color: 'bg-yellow-500', text: '⚠️ Partial Refund' },
-      penalty_applied: { color: 'bg-red-500', text: '❌ Penalty Applied' },
-    };
-    
-    const badge = badges[order.escrowStatus];
-    if (!badge) return null;
-    
-    return (
-      <Badge className={`${badge.color} text-white`}>
-        {badge.text}
-      </Badge>
-    );
-  };
-
   return (
     <div className="space-y-8 p-6 lg:p-8 bg-gradient-to-br from-indigo-50 via-white to-blue-50 rounded-3xl border border-indigo-100">
       {/* Header */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
-          <h2 className="font-display text-3xl lg:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            💊 Medicines
+          <h2 className="font-display text-3xl lg:text-4xl font-bold text-black">
+            💊 Medicines & Timings
           </h2>
-          <p className="text-xl text-muted-foreground mt-1">Order from nearby pharmacies with MetaMask escrow protection</p>
+          <p className="text-xl text-muted-foreground mt-1">Manage your medication schedule and find pharmacies</p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-          {/* Wallet Status */}
+        <div className="flex gap-3 items-center">
+          {/* Cart Button */}
+          <Button
+            className="rounded-2xl relative bg-white text-primary border border-primary/20 hover:bg-primary/5"
+            variant="outline"
+            onClick={() => setActiveTab("cart")}
+          >
+            <ShoppingCart className="h-5 w-5" />
+            {cart.length > 0 && (
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                {cart.length}
+              </span>
+            )}
+          </Button>
+
           {isConnected ? (
             <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-2xl">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
@@ -649,12 +609,12 @@ export default function MedicationsSection() {
                 <p className="text-xs text-emerald-600">{walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}</p>
               </div>
               <Button variant="ghost" size="sm" onClick={disconnectWallet} className="h-8 px-2">
-                <X className="h-4 w-4" />
+                <Wallet className="h-4 w-4" />
               </Button>
             </div>
           ) : (
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="gap-2 rounded-2xl h-12 border-purple-200 hover:bg-purple-50"
               onClick={() => setWalletDialogOpen(true)}
             >
@@ -662,38 +622,36 @@ export default function MedicationsSection() {
               Connect Wallet
             </Button>
           )}
-          <Button 
-            variant="outline" 
-            className="gap-2 rounded-2xl h-12 flex-1 sm:flex-none"
-            onClick={() => setPrescriptionDialogOpen(true)}
-          >
-            <Camera className="h-4 w-4" />
-            Upload Prescription
-          </Button>
-          <Button className="gap-2 rounded-2xl h-12 bg-gradient-to-r from-primary to-primary/80 shadow-lg flex-1 sm:flex-none">
-            <ShoppingCart className="h-4 w-4" />
-            Cart ({cart.length}) ₹{totalCartAmount.toFixed(0)}
-          </Button>
         </div>
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 bg-white/50 backdrop-blur-sm border rounded-3xl p-1 shadow-lg">
-          <TabsTrigger value="list" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-primary data-[state=active]:to-primary/80 data-[state=active]:shadow-lg rounded-2xl py-3">
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 bg-muted/50 p-1 rounded-xl">
+          <TabsTrigger
+            value="list"
+            className="rounded-lg py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
             Medicine List
           </TabsTrigger>
-          <TabsTrigger value="pharmacies" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-primary data-[state=active]:to-primary/80 data-[state=active]:shadow-lg rounded-2xl py-3">
+          <TabsTrigger
+            value="pharmacies"
+            className="rounded-lg py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
             Pharmacies
           </TabsTrigger>
-          <TabsTrigger value="orders" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-green-600 data-[state=active]:shadow-lg rounded-2xl py-3">
-            Orders ({orders.length})
+
+          <TabsTrigger
+            value="timings"
+            className="rounded-lg py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
+            Timings
           </TabsTrigger>
-          <TabsTrigger value="cart" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-orange-600 data-[state=active]:shadow-lg rounded-2xl py-3">
-            Cart ({cart.length})
-          </TabsTrigger>
-          <TabsTrigger value="wallet" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-600 data-[state=active]:shadow-lg rounded-2xl py-3">
-            💰 Wallet
+          <TabsTrigger
+            value="wallet"
+            className="rounded-lg py-3 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
+            Wallet
           </TabsTrigger>
         </TabsList>
 
@@ -726,944 +684,487 @@ export default function MedicationsSection() {
             {filteredMedicines.map((medicine) => (
               <Card key={medicine.id} className="group hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden border-0 bg-white/70 backdrop-blur-sm hover:bg-white">
                 <CardHeader className="p-0 relative overflow-hidden">
-                  <img 
-                    src={medicine.image} 
+                  <img
+                    src={medicine.image}
                     alt={medicine.name}
                     className="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   {medicine.requiresPrescription && (
-                    <Badge className="absolute top-3 right-3 bg-gradient-to-r from-orange-500 to-red-500 shadow-lg">
+                    <Badge className="absolute top-3 right-3 bg-red-500 shadow-lg">
                       Rx Required
                     </Badge>
                   )}
                 </CardHeader>
                 <CardContent className="p-6 pt-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1">
-                      {[...Array(5)].map((_, i) => (
-                        <Star 
-                          key={i} 
-                          className={`h-4 w-4 ${i < Math.floor(medicine.rating) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`} 
-                        />
-                      ))}
-                      <span className="text-sm font-medium ml-1">{medicine.rating}</span>
+                  <div className="mt-4 flex items-center justify-between">
+                    <h3 className="font-bold text-xl">{medicine.name}</h3>
+                    <div className="flex items-center gap-1 text-yellow-500">
+                      <Star className="h-4 w-4 fill-current" />
+                      <span className="text-sm font-medium">{medicine.rating}</span>
                     </div>
                   </div>
-                  <h3 className="font-bold text-xl leading-tight mb-1 group-hover:text-primary transition-colors">{medicine.name}</h3>
-                  <p className="text-sm font-medium text-muted-foreground mb-2">{medicine.brand}</p>
-                  <p className="text-xs text-muted-foreground line-clamp-2 mb-4">{medicine.description}</p>
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-2xl font-bold text-primary">₹{medicine.price}</span>
-                      <Badge variant="secondary" className="text-xs">{medicine.packSize}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Pill className="h-3 w-3" />
-                      {medicine.dosage} | {medicine.manufacturer}
+                  <p className="text-sm font-medium text-muted-foreground">{medicine.brand}</p>
+                  <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{medicine.description}</p>
+
+                  <div className="flex items-center justify-between mt-4 mb-4">
+                    <span className="text-2xl font-bold text-primary">₹{medicine.price}</span>
+                    <Badge variant="secondary">{medicine.packSize}</Badge>
+                  </div>
+
+                  {/* Quantity and Actions */}
+                  <div className="space-y-3">
+                    <Select
+                      value={selectedQuantities[medicine.id] || 'full'}
+                      onValueChange={(val: any) => handleQuantityChange(medicine.id, val)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select Quantity" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="half">Half Sheet (50% Price)</SelectItem>
+                        <SelectItem value="full">Full Sheet (Standard)</SelectItem>
+                        <SelectItem value="double">2 Sheets (2x Price)</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        className="w-full"
+                        onClick={() => addToCart(medicine)}
+                      >
+                        <ShoppingCart className="h-4 w-4 mr-2" />
+                        Add
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="w-full border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
+                        onClick={() => quickAddReminder(medicine)}
+                      >
+                        <Clock className="h-4 w-4 mr-2" />
+                        Remind
+                      </Button>
                     </div>
                   </div>
-                  <Button 
-                    onClick={() => openQuantityDialog(medicine)}
-                    className="w-full rounded-2xl h-12 bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary shadow-lg font-semibold group-hover:shadow-xl transition-all"
-                    disabled={!medicine.inStock}
-                  >
-                    <PlusIcon className="h-5 w-5 mr-2 group-hover:scale-110 transition-transform" />
-                    {medicine.inStock ? 'Add to Cart' : 'Out of Stock'}
-                  </Button>
                 </CardContent>
               </Card>
             ))}
           </div>
         </TabsContent>
 
+        {/* Cart Tab */}
+        <TabsContent value="cart" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingCart className="h-6 w-6 text-primary" />
+                Your Cart
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {cart.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                  <p>Your cart is empty.</p>
+                  <Button variant="link" onClick={() => setActiveTab('list')}>Browse Medicines</Button>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {cart.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-4 bg-muted/30 rounded-xl">
+                      <div className="flex items-center gap-4">
+                        <img src={item.medicine.image} alt={item.medicine.name} className="w-16 h-16 rounded-lg object-cover" />
+                        <div>
+                          <h4 className="font-bold">{item.medicine.name}</h4>
+                          <Badge variant="outline" className="capitalize">{item.quantityType} Sheet</Badge>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="font-bold text-lg">
+                          ₹{(item.medicine.price * (item.quantityType === 'half' ? 0.5 : item.quantityType === 'double' ? 2 : 1)).toFixed(0)}
+                        </span>
+                        <Button variant="ghost" size="icon" onClick={() => removeFromCart(idx)} className="text-red-500">
+                          <Trash2 className="h-5 w-5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="pt-6 border-t space-y-3">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Subtotal</span>
+                      <span>₹{cart.reduce((sum, item) => sum + (item.medicine.price * (item.quantityType === 'half' ? 0.5 : item.quantityType === 'double' ? 2 : 1)), 0).toFixed(0)}</span>
+                    </div>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Platform Fee (5%)</span>
+                      <span>₹{(cart.reduce((sum, item) => sum + (item.medicine.price * (item.quantityType === 'half' ? 0.5 : item.quantityType === 'double' ? 2 : 1)), 0) * 0.05).toFixed(0)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-xl pt-2 border-t border-dashed">
+                      <span>Total Bill</span>
+                      <span>₹{(cart.reduce((sum, item) => sum + (item.medicine.price * (item.quantityType === 'half' ? 0.5 : item.quantityType === 'double' ? 2 : 1)), 0) * 1.05).toFixed(0)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-emerald-600 bg-emerald-50 p-2 rounded-lg mt-2">
+                      <span className="flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Security Deposit (Refundable)</span>
+                      <span className="font-bold">₹{SECURITY_DEPOSIT}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-4">
+                    <Button size="lg" onClick={placeOrder} className="px-8 w-full sm:w-auto">
+                      Place Order
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Orders Tab */}
+        <TabsContent value="orders" className="mt-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>My Orders</CardTitle>
+                <CardDescription>
+                  A ₹{SECURITY_DEPOSIT} security deposit is locked for each order and refunded upon collection.
+                </CardDescription>
+              </div>
+
+              {/* Admin Toggle Simulation */}
+              <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-xl border">
+                <UserCog className={`h-4 w-4 ${isAdminMode ? 'text-primary' : 'text-muted-foreground'}`} />
+                <Label htmlFor="admin-mode" className="text-sm cursor-pointer select-none">Admin Mode</Label>
+                <input
+                  id="admin-mode"
+                  type="checkbox"
+                  checked={isAdminMode}
+                  onChange={(e) => setIsAdminMode(e.target.checked)}
+                  className="h-4 w-4 accent-primary"
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {orders.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Package className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                  <p>No orders history found.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {orders.map(order => (
+                    <div key={order.id} className="p-4 border rounded-xl flex flex-col sm:flex-row items-center justify-between hover:bg-muted/10 transition-colors gap-4">
+                      <div>
+                        <p className="font-bold">Order #{order.id.slice(-6)}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {order.date} • {order.items.length} items • Total Bill: ₹{order.total.toFixed(0)}
+                        </p>
+                        <div className="text-xs mt-1 text-emerald-600 font-bold flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3" />
+                          {order.status === 'delivered' ? `Deposit ₹${SECURITY_DEPOSIT} Refunded` : `Deposit ₹${SECURITY_DEPOSIT} Locked`}
+                        </div>
+                      </div>
+                      <div className="text-right flex items-center gap-4">
+                        <div>
+                          <Badge variant="secondary" className={order.status === 'delivered' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}>
+                            {order.status === 'delivered' ? 'Collected' : 'Pending Collection'}
+                          </Badge>
+                        </div>
+
+                        {/* Only show Collect Button in Admin Mode */}
+                        {isAdminMode && order.status !== 'delivered' && (
+                          <Button
+                            size="sm"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                            onClick={() => handleCollectOrder(order.id)}
+                          >
+                            Admin: Verify & Refund
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Pharmacies Tab */}
         <TabsContent value="pharmacies" className="mt-6">
-          {/* MetaMask Connection Banner */}
-          {!isConnected && (
-            <Card className="mb-6 bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
-              <CardContent className="p-6">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-purple-100 rounded-2xl">
-                    <Wallet className="h-8 w-8 text-purple-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-bold text-lg text-purple-900">Connect MetaMask for Secure Payments</h3>
-                    <p className="text-sm text-purple-700">Your payment is locked in escrow until you collect your order. Auto-refund if not collected!</p>
-                  </div>
-                  <Button 
-                    onClick={() => setWalletDialogOpen(true)}
-                    className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl"
-                  >
-                    Connect Wallet
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {pharmacies.map((pharmacy) => (
-              <Card key={pharmacy.id} className="group hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 bg-white/70 backdrop-blur-sm hover:bg-white border-0">
+              <Card key={pharmacy.id} className="group hover:shadow-xl transition-all duration-300 bg-white/70 backdrop-blur-sm hover:bg-white border-0">
                 <CardHeader className="p-0 overflow-hidden rounded-t-2xl">
-                  <img 
-                    src={pharmacy.image} 
+                  <img
+                    src={pharmacy.image}
                     alt={pharmacy.name}
                     className="w-full h-40 object-cover group-hover:scale-105 transition-transform"
                   />
                 </CardHeader>
-                <CardContent className="p-6 pt-0">
-                  <div className="flex items-center gap-2 mb-3">
-                    <h3 className="font-bold text-xl flex-1">{pharmacy.name}</h3>
-                    <div className="flex items-center gap-1 text-yellow-500">
-                      <Star className="h-5 w-5 fill-current" />
-                      <span className="font-semibold">{pharmacy.rating}</span>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm mb-6">
+                <CardContent className="p-6">
+                  <h3 className="font-bold text-xl mb-2">{pharmacy.name}</h3>
+                  <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <MapPin className="h-4 w-4" />
                       <span>{pharmacy.distance}km away</span>
                     </div>
                     <div className="flex items-center gap-2 text-emerald-600 font-semibold">
                       <Clock className="h-4 w-4" />
-                      {pharmacy.deliveryTime}
+                      {pharmacy.deliveryTime} delivery
                     </div>
                   </div>
-                  {prescriptionImage && cart.length > 0 ? (
-                    <div className="space-y-3">
-                      <Button 
-                        onClick={() => placeOrderWithPharmacy(pharmacy)}
-                        disabled={!isConnected || balance < totalWithDelivery || isMetaMaskLoading}
-                        className="w-full rounded-2xl h-12 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-xl font-semibold disabled:opacity-50"
-                      >
-                        {isMetaMaskLoading ? (
-                          <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                        ) : (
-                          <Lock className="h-5 w-5 mr-2" />
-                        )}
-                        {!isConnected ? 'Connect Wallet First' : 
-                         balance < totalWithDelivery ? 'Insufficient Balance' :
-                         `Lock ₹${totalWithDelivery.toFixed(0)} in Escrow`}
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        className="w-full rounded-2xl h-11 border-2 border-indigo-200 hover:border-indigo-300"
-                        onClick={() => {
-                          toast.info(`Calling ${pharmacy.name} at ${pharmacy.phone}...`);
-                          window.open(`tel:${pharmacy.phone}`, '_blank');
-                        }}
-                      >
-                        <PhoneCall className="h-4 w-4 mr-2" />
-                        Call Before Confirm
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button 
-                      variant="outline" 
-                      className="w-full rounded-2xl h-12"
-                      onClick={() => setPrescriptionDialogOpen(true)}
-                    >
-                      {prescriptionImage ? 'Add Medicines First' : 'Upload Prescription First'}
-                    </Button>
-                  )}
+                  <Button className="w-full mt-4 rounded-xl" variant="outline">
+                    View Details
+                  </Button>
                 </CardContent>
               </Card>
             ))}
           </div>
         </TabsContent>
 
-        {/* Orders Tab */}
-        <TabsContent value="orders" className="mt-6">
-          {orders.length === 0 ? (
-            <Card className="text-center p-16 bg-gradient-to-r from-gray-50 to-gray-100">
-              <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-2xl font-bold mb-2">No orders yet</h3>
-              <p className="text-muted-foreground mb-6">Start browsing medicines to place your first order</p>
-              <Button className="rounded-2xl" onClick={() => setActiveTab('list')}>
-                Browse Medicines
-              </Button>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {orders.slice().reverse().map((order) => (
-                <Card 
-                  key={order.id}
-                  className="group hover:shadow-xl cursor-pointer transition-all border-0 bg-white/70 backdrop-blur-sm hover:bg-white"
-                  onClick={() => {
-                    setSelectedOrder(order);
-                    setOrderDetailDialogOpen(true);
-                  }}
-                >
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className={`p-2 rounded-xl ${getStatusColor(order.status)}`}>
-                        {getStatusIcon(order.status)}
-                      </div>
-                      <div className="text-right">
-                        <Badge className="bg-gradient-to-r from-primary to-primary/80 shadow">
-                          ₹{order.totalWithDelivery?.toFixed(0) || order.totalAmount?.toFixed(0)}
-                        </Badge>
-                        {order.escrowStatus && (
-                          <div className="mt-1">
-                            {getEscrowStatusBadge(order)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-2 mb-4">
-                      <h3 className="font-bold text-lg">{order.pharmacy.name}</h3>
-                      <p className="text-sm text-muted-foreground">{order.estimatedDelivery}</p>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Items: {order.items.length}</span>
-                      <span className="font-semibold">{getStatusText(order.status)}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+        {/* Timings Tab */}
+        <TabsContent value="timings" className="mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Add Reminder Form */}
+            <Card className="lg:col-span-1 h-fit">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-primary" />
+                  Add New Reminder
+                </CardTitle>
+                <CardDescription>
+                  Set a time to take your medicine. We'll alert you.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Language Selection */}
+                <div className="space-y-3 p-4 bg-muted/30 rounded-xl border">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2 text-primary font-semibold">
+                      <Languages className="h-4 w-4" />
+                      Audio Language
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={testVoice}
+                      className="h-8 gap-2 bg-white"
+                    >
+                      <PlayCircle className="h-3 w-3" />
+                      Test Voice
+                    </Button>
+                  </div>
 
-        {/* Cart Tab */}
-        <TabsContent value="cart" className="mt-6">
-          {cart.length === 0 ? (
-            <div className="text-center p-16">
-              <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-2xl font-bold mb-2">Your cart is empty</h3>
-              <Button className="rounded-2xl" onClick={() => setActiveTab('list')}>
-                Start Shopping
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <h3 className="text-2xl font-bold">Shopping Cart ({cart.length})</h3>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {cart.map((item, index) => (
-                  <div key={`${item.medicine.id}-${item.quantityType}`} className="p-4 border rounded-2xl flex items-center gap-4 hover:bg-gray-50 transition-colors">
-                    <img 
-                      src={item.medicine.image} 
-                      alt={item.medicine.name}
-                      className="w-16 h-16 object-cover rounded-xl"
-                    />
-                    <div className="flex-1 space-y-1">
-                      <h4 className="font-semibold">{item.medicine.name}</h4>
-                      <p className="text-sm text-muted-foreground">{item.medicine.brand}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.quantity} × {item.quantityType.toUpperCase()} ({item.medicine.dosage})
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-lg">
-                        ₹{Math.round(item.medicine.price * (item.quantityType === 'double' ? 1.8 : item.quantityType === 'half' ? 0.6 : 1) * item.quantity)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <Card className="bg-gradient-to-r from-gray-50 to-gray-100">
-                <CardContent className="p-6">
-                  <div className="space-y-3 text-2xl">
-                    <div className="flex justify-between font-bold">
-                      <span>Total ({cart.length} items)</span>
-                      <span>₹{totalCartAmount.toFixed(0)}</span>
-                    </div>
-                    <div className="flex justify-between text-lg text-muted-foreground">
-                      <span>Delivery Fee</span>
-                      <span>₹{DELIVERY_FEE}</span>
-                    </div>
-                    <div className="h-px bg-muted my-3" />
-                    <div className="flex justify-between text-3xl font-bold text-primary">
-                      <span>Grand Total</span>
-                      <span>₹{totalWithDelivery.toFixed(0)}</span>
-                    </div>
-                  </div>
-                  {isConnected ? (
-                    <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-                      <div className="flex items-center gap-2 text-emerald-700">
-                        <Wallet className="h-5 w-5" />
-                        <span className="font-medium">Wallet Balance: ₹{balance.toFixed(0)}</span>
-                        {balance < totalWithDelivery && (
-                          <Badge variant="destructive" className="ml-auto">Insufficient</Badge>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                      <div className="flex items-center gap-2 text-amber-700">
-                        <AlertTriangle className="h-5 w-5" />
-                        <span className="font-medium">Connect MetaMask wallet to proceed</span>
-                      </div>
+                  <Select value={audioLanguage} onValueChange={setAudioLanguage}>
+                    <SelectTrigger className="w-full bg-white">
+                      <SelectValue placeholder="Select Language" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUPPORTED_LANGUAGES.map((lang) => (
+                        <SelectItem key={lang.code} value={lang.code}>
+                          {lang.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Native Voice Status Indicator */}
+                  {availableVoices.length > 0 && (
+                    <div className="flex items-center gap-2 text-xs">
+                      {getNativeVoice(audioLanguage) ? (
+                        <><CheckCircle2 className="h-3 w-3 text-emerald-600" /><span className="text-emerald-600">Native voice available</span></>
+                      ) : (
+                        <><AlertCircle className="h-3 w-3 text-amber-500" /><span className="text-amber-500">Native voice not found - using default</span></>
+                      )}
                     </div>
                   )}
-                  <Button 
-                    className="w-full mt-6 rounded-2xl h-14 bg-gradient-to-r from-primary to-primary/90 shadow-xl text-lg font-bold"
-                    onClick={() => setActiveTab('pharmacies')}
-                  >
-                    Proceed to Checkout
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </TabsContent>
 
-        {/* Wallet Tab */}
-        <TabsContent value="wallet" className="mt-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Wallet Info Card */}
-            <Card className="bg-gradient-to-br from-purple-500 to-pink-600 text-white">
-              <CardContent className="p-8">
-                <div className="flex items-center gap-3 mb-6">
-                  <Wallet className="h-8 w-8" />
-                  <h3 className="text-2xl font-bold">MetaMask Wallet</h3>
+                  <p className="text-xs text-muted-foreground">
+                    "Ding" sound plays before the voice alert.
+                  </p>
                 </div>
-                {isConnected ? (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-purple-200 text-sm">Balance</p>
-                      <p className="text-4xl font-bold">₹{balance.toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <p className="text-purple-200 text-sm">Address</p>
-                      <p className="font-mono text-sm bg-white/20 px-3 py-2 rounded-xl">
-                        {walletAddress}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-purple-200 text-sm">Network</p>
-                      <p className="font-medium">{network}</p>
-                    </div>
-                    <div className="flex gap-2 pt-4">
-                      <Button 
-                        variant="secondary" 
-                        className="flex-1 rounded-xl"
-                        onClick={() => addFunds(1000)}
-                      >
-                        <DollarSign className="h-4 w-4 mr-2" />
-                        Add ₹1000 (Demo)
-                      </Button>
-                      <Button 
-                        variant="secondary" 
-                        className="flex-1 rounded-xl"
-                        onClick={resetBalance}
-                      >
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Reset Balance
-                      </Button>
-                    </div>
-                    <Button 
-                      variant="outline" 
-                      className="w-full rounded-xl bg-white/10 border-white/30 hover:bg-white/20"
-                      onClick={disconnectWallet}
-                    >
-                      Disconnect Wallet
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <p className="text-purple-200 mb-4">Connect your wallet to manage payments</p>
-                    <Button 
-                      className="rounded-xl bg-white text-purple-600 hover:bg-purple-50"
-                      onClick={handleConnectWallet}
-                      disabled={isMetaMaskLoading}
-                    >
-                      {isMetaMaskLoading ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <Wallet className="h-4 w-4 mr-2" />
-                      )}
-                      Connect MetaMask
-                    </Button>
-                    {!isMetaMaskInstalled && (
-                      <p className="text-xs text-purple-200 mt-4">
-                        MetaMask not detected. Please install the extension.
-                      </p>
+
+                <div className="space-y-2">
+                  <Label>Medicine Name</Label>
+                  <div className="flex gap-2">
+                    {newReminderImage && (
+                      <img src={newReminderImage} alt="Preview" className="w-10 h-10 rounded-lg object-cover bg-white border" />
                     )}
+                    <Input
+                      placeholder="e.g. Paracetamol"
+                      value={newReminderMed}
+                      onChange={(e) => setNewReminderMed(e.target.value)}
+                      className="flex-1"
+                    />
                   </div>
-                )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Dosage (Optional)</Label>
+                  <Input
+                    placeholder="e.g. 1 Tablet after food"
+                    value={newReminderDosage}
+                    onChange={(e) => setNewReminderDosage(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Time</Label>
+                  <Input
+                    type="time"
+                    value={newReminderTime}
+                    onChange={(e) => setNewReminderTime(e.target.value)}
+                  />
+                </div>
+                <Button className="w-full" onClick={handleAddReminder}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Reminder
+                </Button>
               </CardContent>
             </Card>
 
-            {/* Transactions Card */}
-            <Card>
+            {/* Reminders List */}
+            <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5" />
-                  Transaction History
-                </CardTitle>
+                <CardTitle>Your Schedule</CardTitle>
               </CardHeader>
               <CardContent>
-                {transactions.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Clock className="h-12 w-12 mx-auto mb-2 opacity-30" />
-                    <p>No transactions yet</p>
+                {reminders.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Bell className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                    <p>No reminders set yet.</p>
                   </div>
                 ) : (
-                  <div className="space-y-3 max-h-80 overflow-y-auto">
-                    {transactions.slice().reverse().map((tx) => (
-                      <div key={tx.id} className="flex items-center gap-3 p-3 border rounded-xl">
-                        <div className={`p-2 rounded-xl ${
-                          tx.type === 'lock' ? 'bg-blue-100 text-blue-600' :
-                          tx.type === 'release' ? 'bg-emerald-100 text-emerald-600' :
-                          tx.type === 'refund' ? 'bg-green-100 text-green-600' :
-                          'bg-red-100 text-red-600'
-                        }`}>
-                          {tx.type === 'lock' ? <Lock className="h-4 w-4" /> :
-                           tx.type === 'release' ? <Unlock className="h-4 w-4" /> :
-                           tx.type === 'refund' ? <RefreshCw className="h-4 w-4" /> :
-                           <AlertTriangle className="h-4 w-4" />}
+                  <div className="space-y-4">
+                    {reminders.sort((a, b) => a.time.localeCompare(b.time)).map((reminder) => (
+                      <div
+                        key={reminder.id}
+                        className="flex items-center justify-between p-4 bg-white border rounded-2xl shadow-sm hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-primary/10 rounded-xl text-primary font-bold text-lg">
+                            {reminder.time}
+                          </div>
+                          {reminder.image ? (
+                            <img src={reminder.image} alt={reminder.medicineName} className="w-12 h-12 rounded-xl object-cover bg-gray-50 border" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center text-orange-500">
+                              <Pill className="h-6 w-6" />
+                            </div>
+                          )}
+                          <div>
+                            <h4 className="font-bold text-lg">{reminder.medicineName}</h4>
+                            <p className="text-sm text-muted-foreground">{reminder.dosage}</p>
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <p className="font-medium capitalize">{tx.type}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(tx.timestamp).toLocaleString()}
-                          </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => handleDeleteReminder(reminder.id)}
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </Button>
                         </div>
-                        <p className={`font-bold ${
-                          tx.type === 'lock' || tx.type === 'penalty' ? 'text-red-600' : 'text-emerald-600'
-                        }`}>
-                          {tx.type === 'lock' || tx.type === 'penalty' ? '-' : '+'}₹{tx.amount.toFixed(0)}
-                        </p>
                       </div>
                     ))}
                   </div>
                 )}
               </CardContent>
             </Card>
-
-            {/* Escrow Info Card */}
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-blue-600" />
-                  How Escrow Protection Works
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className="text-center p-4 bg-blue-50 rounded-xl">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                      <Lock className="h-6 w-6 text-blue-600" />
-                    </div>
-                    <h4 className="font-semibold">1. Lock Payment</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Your payment is locked when you place an order</p>
-                  </div>
-                  <div className="text-center p-4 bg-orange-50 rounded-xl">
-                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                      <Package className="h-6 w-6 text-orange-600" />
-                    </div>
-                    <h4 className="font-semibold">2. Preparation</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Pharmacy prepares your order</p>
-                  </div>
-                  <div className="text-center p-4 bg-purple-50 rounded-xl">
-                    <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                      <Truck className="h-6 w-6 text-purple-600" />
-                    </div>
-                    <h4 className="font-semibold">3. Delivery</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Order is delivered to you</p>
-                  </div>
-                  <div className="text-center p-4 bg-emerald-50 rounded-xl">
-                    <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                      <Unlock className="h-6 w-6 text-emerald-600" />
-                    </div>
-                    <h4 className="font-semibold">4. Release</h4>
-                    <p className="text-xs text-muted-foreground mt-1">Payment released to pharmacy on collection</p>
-                  </div>
-                </div>
-                <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
-                    <div>
-                      <h4 className="font-semibold text-amber-800">No-Show Protection</h4>
-                      <p className="text-sm text-amber-700">
-                        If you don't collect your order within 24 hours, a {(PENALTY_RATE * 100).toFixed(0)}% penalty is applied and {((1 - PENALTY_RATE) * 100).toFixed(0)}% is refunded.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </TabsContent>
-      </Tabs>
 
-      {/* Wallet Connect Dialog */}
-      <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Wallet className="h-5 w-5" />
-              Connect MetaMask Wallet
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="p-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl text-center">
-              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <Wallet className="h-10 w-10 text-white" />
-              </div>
-              <h3 className="text-xl font-bold mb-2">Secure Escrow Payments</h3>
-              <p className="text-sm text-muted-foreground">
-                Connect your MetaMask wallet to lock payments in escrow. 
-                Funds are released to pharmacy only after you collect your order.
-              </p>
-            </div>
-            
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 bg-emerald-50 rounded-xl">
-                <CheckCircle className="h-5 w-5 text-emerald-600" />
-                <span className="text-sm">Full refund if cancelled before preparation</span>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
-                <Shield className="h-5 w-5 text-blue-600" />
-                <span className="text-sm">24-hour collection window with protection</span>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl">
-                <AlertTriangle className="h-5 w-5 text-amber-600" />
-                <span className="text-sm">{(PENALTY_RATE * 100).toFixed(0)}% penalty for no-show, rest refunded</span>
-              </div>
-            </div>
-
-            <Button 
-              className="w-full h-14 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-lg font-bold"
-              onClick={handleConnectWallet}
-              disabled={isMetaMaskLoading || !isMetaMaskInstalled}
-            >
-              {isMetaMaskLoading ? (
-                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-              ) : (
-                <Wallet className="h-5 w-5 mr-2" />
-              )}
-              {!isMetaMaskInstalled ? 'Install MetaMask Extension' : 'Connect MetaMask'}
-            </Button>
-            
-            {!isMetaMaskInstalled && (
-              <p className="text-xs text-center text-muted-foreground">
-                <a href="https://metamask.io/download/" target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline">
-                  Download MetaMask
-                </a>
-                {" "}browser extension to continue
-              </p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Prescription Upload Dialog */}
-      <Dialog open={prescriptionDialogOpen} onOpenChange={setPrescriptionDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Upload Prescription</DialogTitle>
-            <p className="text-sm text-muted-foreground">Required for prescription medicines</p>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all ${prescriptionImage ? 'border-green-300 bg-green-50/50' : 'border-gray-300 hover:border-primary/50'}`}>
-              {prescriptionImage ? (
-                <div className="space-y-4">
-                  <div className="relative">
-                    <img 
-                      src={prescriptionImage} 
-                      alt="Prescription" 
-                      className="w-full max-h-64 object-contain rounded-xl shadow-lg"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="absolute -top-2 -right-2 rounded-full w-9 h-9 p-0"
-                      onClick={() => setPrescriptionImage(null)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" className="flex-1">Retake Photo</Button>
-                    <Button className="flex-1 bg-emerald-500 hover:bg-emerald-600">✅ Uploaded</Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <Upload className="w-16 h-16 mx-auto text-gray-400" />
-                  <div>
-                    <h3 className="text-xl font-bold mb-2">Drop your prescription here</h3>
-                    <p className="text-muted-foreground">Take a clear photo of your prescription for verification</p>
-                  </div>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                    id="prescription-upload"
-                  />
-                  <Button 
-                    className="w-full rounded-xl h-12"
-                    onClick={() => document.getElementById('prescription-upload')?.click()}
-                  >
-                    📷 Choose from Gallery
-                  </Button>
-                </div>
-              )}
-            </div>
-            <Button 
-              className="w-full rounded-xl h-12"
-              onClick={() => {
-                setPrescriptionDialogOpen(false);
-                setActiveTab('pharmacies');
-              }}
-              disabled={!prescriptionImage}
-            >
-              Continue to Pharmacies
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Quantity Selection Dialog */}
-      <Dialog open={quantityDialogOpen} onOpenChange={setQuantityDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Select Quantity</DialogTitle>
-          </DialogHeader>
-          {selectedMedicine && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-4 p-4 border rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50">
-                <img 
-                  src={selectedMedicine.image} 
-                  alt={selectedMedicine.name}
-                  className="w-20 h-20 object-cover rounded-lg shadow-md"
-                />
-                <div className="space-y-1">
-                  <h3 className="font-semibold text-lg leading-tight">{selectedMedicine.name}</h3>
-                  <p className="text-sm text-muted-foreground">{selectedMedicine.brand}</p>
-                  <p className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full w-fit">
-                    {selectedMedicine.pharmacyName}
-                  </p>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="text-center space-y-1">
-                  <p className="text-sm text-muted-foreground">Select quantity type</p>
-                </div>
-                {[
-                  { type: 'single' as const, label: '1 Tablet', multiplier: 1 },
-                  { type: 'double' as const, label: '2 Tablets', multiplier: 1.8 },
-                  { type: 'half' as const, label: '½ Tablet', multiplier: 0.6 },
-                ].map(({ type, label, multiplier }) => {
-                  const price = Math.round(selectedMedicine.price * multiplier);
-                  return (
-                    <Button
-                      key={type}
-                      variant="outline"
-                      className="w-full justify-between h-14 rounded-2xl border-2 hover:border-primary group"
-                      onClick={() => addToCart(selectedMedicine, type)}
-                    >
-                      <div>
-                        <div className="font-medium">{label}</div>
-                        <div className="text-xs text-muted-foreground">{selectedMedicine.dosage}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-lg">₹{price}</div>
-                        <div className="text-xs text-muted-foreground">
-                          per {type === 'half' ? 'half' : type}
-                        </div>
-                      </div>
-                    </Button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Phone Confirmation Dialog */}
-      <Dialog open={phoneDialogOpen} onOpenChange={setPhoneDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirm Order Details</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-xl">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
-                  <Package2 className="h-5 w-5 text-primary" />
+        {/* Wallet Tab */}
+        <TabsContent value="wallet" className="mt-6">
+          <Card className="bg-white border rounded-3xl shadow-sm text-black">
+            <CardContent className="p-8">
+              <div className="flex items-center gap-3 mb-8 border-b pb-6">
+                <div className="p-3 bg-emerald-100 rounded-2xl">
+                  <Wallet className="h-8 w-8 text-emerald-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold">{selectedPharmacy?.name}</h3>
-                  <p className="text-sm text-muted-foreground">{selectedPharmacy?.deliveryTime}</p>
+                  <h3 className="text-2xl font-bold">MetaMask Wallet</h3>
+                  <p className="text-muted-foreground">Secure payments for your orders</p>
                 </div>
               </div>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Items ({cart.length})</span>
-                  <span>₹{totalCartAmount.toFixed(0)}</span>
-                </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Delivery</span>
-                  <span>₹{DELIVERY_FEE}</span>
-                </div>
-                <div className="h-px bg-muted my-2" />
-                <div className="flex justify-between font-bold text-lg">
-                  <span>Total to Lock</span>
-                  <span>₹{totalWithDelivery.toFixed(0)}</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Escrow Info */}
-            <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl">
-              <div className="flex items-center gap-2 text-purple-700 text-sm">
-                <Lock className="h-4 w-4" />
-                <span>Amount will be locked in escrow until collection</span>
-              </div>
-            </div>
-            
-            <div>
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+91 98765 43210"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-              />
-            </div>
-            
-            <div className="flex gap-2 pt-4">
-              <Button
-                variant="outline"
-                className="flex-1 rounded-xl"
-                onClick={() => setPhoneDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 rounded-xl"
-                onClick={confirmOrder}
-                disabled={!customerPhone || customerPhone.length < 10 || isProcessingOrder}
-              >
-                {isProcessingOrder ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Lock className="h-4 w-4 mr-2" />
-                )}
-                Lock ₹{totalWithDelivery.toFixed(0)}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Order Details Dialog */}
-      <Dialog open={orderDetailDialogOpen} onOpenChange={setOrderDetailDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Order #{selectedOrder?.id.slice(-6)}</DialogTitle>
-          </DialogHeader>
-          {selectedOrder && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`p-3 rounded-2xl ${getStatusColor(selectedOrder.status)}`}>
-                    {getStatusIcon(selectedOrder.status)}
-                  </div>
-                  <div>
-                    <p className="font-semibold">{getStatusText(selectedOrder.status)}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {new Date(selectedOrder.orderDate).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <Badge variant={selectedOrder.status === 'delivered' ? "default" : "secondary"}>
-                    ₹{selectedOrder.totalWithDelivery?.toFixed(0) || selectedOrder.totalAmount?.toFixed(0)}
-                  </Badge>
-                  {selectedOrder.escrowStatus && (
-                    <div className="mt-1">
-                      {getEscrowStatusBadge(selectedOrder)}
+              {isConnected ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100">
+                      <p className="text-emerald-700 text-sm font-medium mb-1">Available Balance</p>
+                      <p className="text-4xl font-bold text-emerald-600">₹{balance.toFixed(2)}</p>
                     </div>
-                  )}
-                </div>
-              </div>
 
-              {/* Escrow Details */}
-              {selectedOrder.escrowLockedAmount && (
-                <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
-                  <CardContent className="p-4">
-                    <h4 className="font-semibold flex items-center gap-2 mb-3">
-                      <Wallet className="h-4 w-4" />
-                      Escrow Details
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-4">
                       <div>
-                        <p className="text-muted-foreground">Locked Amount</p>
-                        <p className="font-bold">₹{selectedOrder.escrowLockedAmount.toFixed(0)}</p>
+                        <p className="text-muted-foreground text-sm font-medium mb-1">Wallet Address</p>
+                        <div className="font-mono text-sm bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                          {walletAddress}
+                        </div>
                       </div>
                       <div>
-                        <p className="text-muted-foreground">Wallet</p>
-                        <p className="font-mono text-xs">{selectedOrder.walletAddress?.slice(0, 10)}...</p>
-                      </div>
-                      {selectedOrder.refundAmount !== null && selectedOrder.refundAmount !== undefined && (
-                        <div>
-                          <p className="text-muted-foreground">Refund Amount</p>
-                          <p className="font-bold text-green-600">₹{selectedOrder.refundAmount.toFixed(0)}</p>
+                        <p className="text-muted-foreground text-sm font-medium mb-1">Network</p>
+                        <div className="font-medium flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-xl w-fit">
+                          <Activity className="h-4 w-4 text-emerald-600" />
+                          {network}
                         </div>
-                      )}
-                      {selectedOrder.penaltyAmount !== null && selectedOrder.penaltyAmount !== undefined && selectedOrder.penaltyAmount > 0 && (
-                        <div>
-                          <p className="text-muted-foreground">Penalty</p>
-                          <p className="font-bold text-red-600">₹{selectedOrder.penaltyAmount.toFixed(0)}</p>
-                        </div>
-                      )}
-                    </div>
-                    {selectedOrder.collectionDeadline && (
-                      <div className="mt-3 pt-3 border-t border-purple-200">
-                        <p className="text-xs text-muted-foreground">
-                          Collection Deadline: {new Date(selectedOrder.collectionDeadline).toLocaleString()}
-                        </p>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-start gap-4">
-                    <img 
-                      src={selectedOrder.pharmacy.image} 
-                      alt={selectedOrder.pharmacy.name}
-                      className="w-14 h-14 rounded-xl object-cover"
-                    />
-                    <div className="space-y-1 flex-1">
-                      <h3 className="font-semibold">{selectedOrder.pharmacy.name}</h3>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <MapPinIcon className="h-4 w-4" />
-                        {selectedOrder.pharmacy.address}
-                      </div>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Clock className="h-4 w-4" />
-                        {selectedOrder.estimatedDelivery}
-                      </div>
-                    </div>
-                    <Button variant="outline" size="sm" className="gap-1">
-                      <Phone className="h-4 w-4" />
-                      Call
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="space-y-3">
-                <h4 className="font-semibold flex items-center gap-2">
-                  <Package className="h-5 w-5" />
-                  Order Items ({selectedOrder.items.length})
-                </h4>
-                {selectedOrder.items.map((item) => (
-                  <div key={item.medicine.id} className="p-4 border rounded-xl flex items-center gap-4">
-                    <img 
-                      src={item.medicine.image} 
-                      alt={item.medicine.name}
-                      className="w-16 h-16 object-cover rounded-lg"
-                    />
-                    <div className="flex-1 space-y-1">
-                      <p className="font-medium">{item.medicine.name}</p>
-                      <p className="text-sm text-muted-foreground">{item.medicine.brand}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.quantity} × {item.quantityType} ({item.medicine.dosage})
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold">₹{(item.medicine.price * (item.quantityType === 'double' ? 1.8 : item.quantityType === 'half' ? 0.6 : 1) * item.quantity).toFixed(0)}</p>
                     </div>
                   </div>
-                ))}
-              </div>
 
-              {selectedOrder.prescriptionImage && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-sm">
-                      <FileText className="h-4 w-4" />
-                      Prescription
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <img 
-                      src={selectedOrder.prescriptionImage} 
-                      alt="Prescription"
-                      className="w-full max-h-64 object-contain rounded-xl"
-                    />
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Action Buttons */}
-              <div className="space-y-3 pt-4 border-t">
-                {/* Simulate Status Progression (Demo) */}
-                {['paid_locked', 'preparing'].includes(selectedOrder.status) && (
-                  <Button 
-                    variant="outline" 
-                    className="w-full rounded-xl"
-                    onClick={() => simulateNextStatus(selectedOrder)}
-                  >
-                    <Activity className="h-4 w-4 mr-2" />
-                    Simulate Next Status (Demo)
-                  </Button>
-                )}
-
-                {/* Mark as Collected */}
-                {selectedOrder.status === 'out_for_delivery' && (
-                  <Button 
-                    className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-green-600"
-                    onClick={() => handleMarkCollected(selectedOrder)}
-                    disabled={isProcessingOrder}
-                  >
-                    {isProcessingOrder ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                    )}
-                    Mark as Collected (Release Escrow)
-                  </Button>
-                )}
-
-                {/* Mark No-Show */}
-                {selectedOrder.status === 'out_for_delivery' && (
-                  <Button 
+                  <Button
                     variant="outline"
-                    className="w-full rounded-xl border-amber-300 text-amber-700 hover:bg-amber-50"
-                    onClick={() => handleMarkNoShow(selectedOrder)}
-                    disabled={isProcessingOrder}
+                    className="w-full rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 mt-4"
+                    onClick={disconnectWallet}
                   >
-                    {isProcessingOrder ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <AlertTriangle className="h-4 w-4 mr-2" />
-                    )}
-                    Mark No-Show ({(PENALTY_RATE * 100).toFixed(0)}% Penalty)
+                    Disconnect Wallet
                   </Button>
-                )}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Wallet className="h-8 w-8 text-emerald-600" />
+                  </div>
+                  <h4 className="text-xl font-bold mb-2">Connect Your Wallet</h4>
+                  <p className="text-muted-foreground mb-8 max-w-md mx-auto">
+                    Connect your MetaMask wallet to securely manage order payments and receive refunds instantly.
+                  </p>
+                  <Button
+                    className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-200 font-bold px-8 h-12 text-lg"
+                    onClick={handleConnectWallet}
+                    disabled={isMetaMaskLoading}
+                  >
+                    {isMetaMaskLoading ? (
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    ) : (
+                      <Wallet className="h-5 w-5 mr-2" />
+                    )}
+                    Connect MetaMask
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-                {/* Cancel Order */}
-                {['pending_payment', 'paid_locked', 'preparing'].includes(selectedOrder.status) && (
-                  <Button 
-                    variant="destructive"
-                    className="w-full rounded-xl"
-                    onClick={() => handleCancelOrder(selectedOrder)}
-                    disabled={isProcessingOrder}
-                  >
-                    {isProcessingOrder ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Ban className="h-4 w-4 mr-2" />
-                    )}
-                    Cancel Order {selectedOrder.status === 'preparing' ? '(50% Penalty)' : '(Full Refund)'}
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
+      </Tabs>
+
+      {/* Wallet Dialog */}
+      <Dialog open={walletDialogOpen} onOpenChange={setWalletDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect Wallet</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Button
+              className="w-full h-12 rounded-xl bg-orange-500 hover:bg-orange-600"
+              onClick={handleConnectWallet}
+              disabled={isMetaMaskLoading}
+            >
+              Connect with MetaMask
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

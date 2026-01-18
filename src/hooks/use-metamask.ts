@@ -50,27 +50,42 @@ export function useMetaMask() {
   const [transactions, setTransactions] = useState<EscrowTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Initialize state from localStorage
+  // Initialize state from localStorage and detect MetaMask
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const savedAddress = localStorage.getItem(STORAGE_KEYS.WALLET_ADDRESS);
-    const savedNetwork = localStorage.getItem(STORAGE_KEYS.NETWORK);
-    const savedBalance = localStorage.getItem(STORAGE_KEYS.BALANCE);
+    const checkMetaMask = () => {
+      const isInstalled = !!window.ethereum?.isMetaMask;
+      const savedAddress = localStorage.getItem(STORAGE_KEYS.WALLET_ADDRESS);
+      const savedNetwork = localStorage.getItem(STORAGE_KEYS.NETWORK);
+      const savedBalance = localStorage.getItem(STORAGE_KEYS.BALANCE);
+
+      setState(prev => ({
+        ...prev,
+        walletAddress: savedAddress,
+        network: savedNetwork,
+        balance: savedBalance ? parseFloat(savedBalance) : DEFAULT_BALANCE,
+        isConnected: !!savedAddress,
+        isMetaMaskInstalled: isInstalled,
+      }));
+    };
+
+    // Check immediately
+    checkMetaMask();
+
+    // Poll for a few seconds in case of async injection
+    const interval = setInterval(checkMetaMask, 1000);
+    const timeout = setTimeout(() => clearInterval(interval), 5000);
+
     const savedTransactions = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-
-    setState(prev => ({
-      ...prev,
-      walletAddress: savedAddress,
-      network: savedNetwork,
-      balance: savedBalance ? parseFloat(savedBalance) : DEFAULT_BALANCE,
-      isConnected: !!savedAddress,
-      isMetaMaskInstalled: !!window.ethereum?.isMetaMask,
-    }));
-
     if (savedTransactions) {
       setTransactions(JSON.parse(savedTransactions));
     }
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
   }, []);
 
   // Listen for account changes
@@ -140,7 +155,7 @@ export function useMetaMask() {
       // Persist to localStorage
       localStorage.setItem(STORAGE_KEYS.WALLET_ADDRESS, address);
       localStorage.setItem(STORAGE_KEYS.NETWORK, network);
-      
+
       // Initialize balance if not set
       if (!localStorage.getItem(STORAGE_KEYS.BALANCE)) {
         localStorage.setItem(STORAGE_KEYS.BALANCE, DEFAULT_BALANCE.toString());
