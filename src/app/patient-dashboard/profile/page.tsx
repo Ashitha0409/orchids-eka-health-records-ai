@@ -6,11 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { 
-  User, 
-  Mail, 
-  Phone, 
-  MapPin, 
+import {
+  User,
+  Mail,
+  Phone,
+  MapPin,
   Calendar,
   Heart,
   Edit,
@@ -31,10 +31,14 @@ interface UserProfile {
   dateOfBirth?: string;
   bloodGroup?: string;
   profilePhoto?: string;
-  
+
   // Profile completion
   profileCompleted: boolean;
   profileCompletionPercentage: number;
+
+  // Karma Points
+  karmaPoints?: number;
+  tier?: 'Normal' | 'Premium' | 'Elite';
 }
 
 export default function PatientProfilePage() {
@@ -48,26 +52,40 @@ export default function PatientProfilePage() {
       try {
         // Try to get from localStorage first (mock data)
         const savedUser = localStorage.getItem("user") || localStorage.getItem("pendingUser");
-        
+
         if (savedUser) {
           const userData = JSON.parse(savedUser);
-          
-          // Mock complete patient profile data
+
+          // Calculate Karma Points based on profile completion and mock activity
+          // Base points 0-500 from profile completion
+          // Bonus points for "account age" or activity (random for demo)
+          const basePoints = userData.profileCompletionPercentage ? userData.profileCompletionPercentage * 5 : 0;
+          const bonusPoints = Math.floor(Math.random() * 200); // Random bonus for demo
+          const totalPoints = basePoints + bonusPoints;
+
+          let tier: 'Normal' | 'Premium' | 'Elite' = 'Normal';
+          if (totalPoints >= 1000) tier = 'Elite';
+          else if (totalPoints >= 500) tier = 'Premium';
+
+          // REAL patient profile data (No "Sarah Johnson" fallback)
           const profileData: UserProfile = {
-            firstName: userData.firstName || "Sarah",
-            lastName: userData.lastName || "Johnson",
-            email: userData.email || "sarah.johnson@example.com",
+            firstName: userData.firstName || "User",
+            lastName: userData.lastName || "",
+            email: userData.email || "",
             role: userData.role || 'patient',
-            phone: userData.phone || "+91 9876543210",
-            address: userData.address || "123 Health Street, Wellness City, State 12345",
-            dateOfBirth: userData.dateOfBirth || "1990-03-20",
-            bloodGroup: userData.bloodGroup || "O+",
+            phone: userData.phone || "Not provided",
+            address: userData.address || "Not provided",
+            dateOfBirth: userData.dateOfBirth || "",
+            bloodGroup: userData.bloodGroup || "Not specified",
             profilePhoto: userData.profilePhoto || "",
-            
-            profileCompleted: true,
-            profileCompletionPercentage: 100
+
+            profileCompleted: userData.profileCompleted || false,
+            profileCompletionPercentage: userData.profileCompletionPercentage || 0,
+
+            karmaPoints: totalPoints,
+            tier: tier
           };
-          
+
           setUser(profileData);
         } else {
           // Redirect to signup if no user data
@@ -86,19 +104,19 @@ export default function PatientProfilePage() {
 
   const getCompletionPercentage = () => {
     if (!user) return 0;
-    
+
     let completedFields = 0;
     let totalFields = 8; // Basic required fields for patients
-    
+
     // Check basic info
     if (user.firstName && user.lastName) completedFields++;
     if (user.email) completedFields++;
-    if (user.phone) completedFields++;
-    if (user.address) completedFields++;
-    if (user.bloodGroup) completedFields++;
+    if (user.phone && user.phone !== "Not provided") completedFields++;
+    if (user.address && user.address !== "Not provided") completedFields++;
+    if (user.bloodGroup && user.bloodGroup !== "Not specified") completedFields++;
     if (user.profilePhoto) completedFields++;
     if (user.dateOfBirth) completedFields++;
-    
+
     return Math.round((completedFields / totalFields) * 100);
   };
 
@@ -108,11 +126,16 @@ export default function PatientProfilePage() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    if (!dateString) return "Not provided";
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch (e) {
+      return dateString;
+    }
   };
 
   if (loading) {
@@ -144,10 +167,12 @@ export default function PatientProfilePage() {
   }
 
   const completionPercentage = getCompletionPercentage();
+  const nextTierPoints = user.tier === 'Normal' ? 500 : user.tier === 'Premium' ? 1000 : 2000;
+  const progressToNextTier = Math.min(100, ((user.karmaPoints || 0) / nextTierPoints) * 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <TopNav 
+      <TopNav
         user={{
           name: `${user.firstName} ${user.lastName}`,
           email: user.email,
@@ -155,16 +180,33 @@ export default function PatientProfilePage() {
           role: user.role
         }}
       />
-      
+
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">My Profile</h1>
+              <div className="flex items-center gap-3 mb-2">
+                <h1 className="text-4xl font-bold text-gray-900">My Profile</h1>
+                {user.tier === 'Elite' && (
+                  <Badge className="bg-yellow-500 text-white border-none text-lg px-3 py-1">
+                    👑 Elite
+                  </Badge>
+                )}
+                {user.tier === 'Premium' && (
+                  <Badge className="bg-blue-600 text-white border-none text-lg px-3 py-1">
+                    💎 Premium
+                  </Badge>
+                )}
+                {user.tier === 'Normal' && (
+                  <Badge variant="outline" className="text-gray-600 border-gray-400 text-lg px-3 py-1">
+                    🛡️ Normal
+                  </Badge>
+                )}
+              </div>
               <p className="text-lg text-muted-foreground">Manage your personal information</p>
             </div>
-            <Button 
+            <Button
               onClick={handleEditProfile}
               className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary"
             >
@@ -173,47 +215,70 @@ export default function PatientProfilePage() {
             </Button>
           </div>
 
-          {/* Profile Completion Card */}
-          <Card className="mb-6">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-green-600" />
-                    Profile Completion
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            {/* Karma Points Card */}
+            <Card className="bg-card text-card-foreground border-primary/20 shadow-lg relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Heart className="w-24 h-24 text-primary" />
+              </div>
+              <CardHeader className="pb-2 relative z-10">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2 text-primary">
+                    <Heart className="w-5 h-5" />
+                    Karma Points
                   </CardTitle>
-                  <CardDescription>
-                    Complete your profile to get the best healthcare experience
-                  </CardDescription>
+                  <span className="text-3xl font-bold text-primary">{user.karmaPoints}</span>
                 </div>
-                <Badge 
-                  variant={completionPercentage === 100 ? "default" : "secondary"}
-                  className="text-lg px-3 py-1"
-                >
-                  {completionPercentage}% Complete
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <Progress value={completionPercentage} className="h-3 mb-4" />
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>
-                  {completionPercentage === 100 ? (
-                    <span className="text-green-600 font-medium">Profile completed!</span>
-                  ) : (
-                    `${100 - completionPercentage}% remaining`
-                  )}
-                </span>
-                <span>
-                  {completionPercentage === 100 ? (
-                    <CheckCircle2 className="w-4 h-4 inline text-green-600" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 inline" />
-                  )}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
+                <CardDescription>
+                  Earn points by completing your profile and health activities
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="relative z-10">
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm font-medium">
+                    <span className="text-foreground">{user.tier} Member</span>
+                    <span className="text-muted-foreground">Next Tier: {nextTierPoints} pts</span>
+                  </div>
+                  <Progress value={progressToNextTier} className="h-3 bg-primary/20 [&>div]:bg-primary" />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {user.tier === 'Elite'
+                      ? "You have reached the highest tier! maintain your health streak."
+                      : `Get ${nextTierPoints - (user.karmaPoints || 0)} more points to reach ${user.tier === 'Normal' ? 'Premium' : 'Elite'} status.`}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Profile Completion Card */}
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      Profile Completion
+                    </CardTitle>
+                  </div>
+                  <span className="text-2xl font-bold text-gray-700">{completionPercentage}%</span>
+                </div>
+                <CardDescription>
+                  Complete your profile to get better recommendations
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Progress value={completionPercentage} className="h-2 mb-4" />
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span>
+                    {completionPercentage === 100 ? (
+                      <span className="text-green-600 font-medium">Profile completed!</span>
+                    ) : (
+                      `${100 - completionPercentage}% remaining`
+                    )}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         {/* Profile Information Grid */}
@@ -241,7 +306,7 @@ export default function PatientProfilePage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Date of Birth</p>
-                <p className="text-lg">{user.dateOfBirth ? formatDate(user.dateOfBirth) : "Not provided"}</p>
+                <p className="text-lg">{formatDate(user.dateOfBirth || "")}</p>
               </div>
             </CardContent>
           </Card>
@@ -291,9 +356,9 @@ export default function PatientProfilePage() {
                 <p className="text-sm font-medium text-muted-foreground">Profile Photo</p>
                 <div className="flex items-center gap-2">
                   {user.profilePhoto ? (
-                    <img 
-                      src={user.profilePhoto} 
-                      alt="Profile" 
+                    <img
+                      src={user.profilePhoto}
+                      alt="Profile"
                       className="w-12 h-12 rounded-full object-cover"
                     />
                   ) : (
@@ -316,9 +381,9 @@ export default function PatientProfilePage() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-6">
-                <img 
-                  src={user.profilePhoto} 
-                  alt="Profile" 
+                <img
+                  src={user.profilePhoto}
+                  alt="Profile"
                   className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-lg"
                 />
                 <div>
@@ -358,7 +423,7 @@ export default function PatientProfilePage() {
                 <Calendar className="w-8 h-8 text-blue-500 mx-auto mb-2" />
                 <p className="text-sm font-medium text-blue-700">Age</p>
                 <p className="text-lg font-bold text-blue-800">
-                  {user.dateOfBirth 
+                  {user.dateOfBirth
                     ? `${new Date().getFullYear() - new Date(user.dateOfBirth).getFullYear()} years`
                     : "Not specified"
                   }

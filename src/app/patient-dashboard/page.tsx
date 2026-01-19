@@ -60,24 +60,9 @@ export default function PatientDashboard() {
             role: parsedUser.role || 'patient',
             profilePhoto: parsedUser.profilePhoto || ""
           });
-        } else {
-          // Default user if no data found
-          setUser({
-            firstName: "Patient",
-            lastName: "User",
-            email: "patient@example.com",
-            role: 'patient'
-          });
         }
       } catch (error) {
-        console.error("Error loading user data:", error);
-        // Default user on error
-        setUser({
-          firstName: "Patient",
-          lastName: "User",
-          email: "patient@example.com",
-          role: 'patient'
-        });
+        console.error("Error loading user data", error);
       } finally {
         setLoading(false);
       }
@@ -125,7 +110,7 @@ export default function PatientDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <TopNav 
+      <TopNav
         user={{
           name: displayName,
           email: user.email,
@@ -133,7 +118,7 @@ export default function PatientDashboard() {
           role: user.role
         }}
       />
-      
+
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         <div className="space-y-8">
           <div>
